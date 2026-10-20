@@ -55,3 +55,26 @@ def test_route_conflict_to_react():
     else:
         # still valid path
         assert decision.mode.value in {"REACT", "RULE_ENGINE", "DIRECT"}
+
+
+def test_eligibility_cooldown():
+    from rec_agent.config import Settings
+
+    cat = Catalog()
+    policy = Policy(Settings(cooldown_minutes=30))
+    snap = cat.get_user("u_noodle_regular")
+    assert snap is not None
+    snap.last_success_at = "2026-10-20T12:00:00+08:00"
+    r = policy.check_eligibility(snap, _scene("2026-10-20T12:10:00+08:00"))
+    assert not r.ok
+    assert r.reason_code == "cooldown"
+
+
+def test_route_fallback_when_budget_exhausted():
+    cat = Catalog()
+    eng = RecommendationEngine(cat)
+    policy = Policy()
+    snap = cat.get_user("u_noodle_regular")
+    out = eng.run(snap, _scene())
+    decision = policy.route(out, budget_ok=False)
+    assert decision.mode.value == "FALLBACK"

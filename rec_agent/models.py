@@ -116,6 +116,9 @@ class UserSnapshot(BaseModel):
     category_opt_out: list[str] = Field(default_factory=list)
     recent_impressions: list[str] = Field(default_factory=list)
     recent_conversions: list[str] = Field(default_factory=list)
+    last_success_at: str = ""
+    recent_shown_merchants: list[str] = Field(default_factory=list)
+    recent_shown_categories: list[str] = Field(default_factory=list)
 
 
 class CandidateProduct(BaseModel):

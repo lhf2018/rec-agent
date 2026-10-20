@@ -12,6 +12,7 @@ from rec_agent.models import (
     UserSnapshot,
 )
 from rec_agent.runtime.guard import Evidence, Guard
+from rec_agent.runtime.trace import TraceRecorder
 from rec_agent.tools import ToolExecutor
 
 
@@ -34,50 +35,44 @@ class AgentLoop:
         snapshot: UserSnapshot,
         scene: Scene,
         candidates: list[CandidateMerchant],
+        trace: TraceRecorder | None = None,
     ) -> dict[str, Any]:
         self.tools.reset()
-        steps: list[dict[str, Any]] = []
+        recorder = trace or TraceRecorder()
+        recorder.set_meta(route_mode=mode.value)
         allowed = self._allowed_ids(candidates)
         evidence = self.guard.build_evidence_index(candidates)
         by_id = {c.merchant_id: c for c in candidates}
-        model_calls = 0
 
         if mode == RouteMode.direct:
-            model_calls += 1
+            recorder.bump_model()
             draft = self._mock_select(snapshot, candidates, prefer_short_term=False)
-            steps.append(
-                {
-                    "step_index": 1,
-                    "decision_reason_code": "direct_submit",
-                    "actions": [{"tool": "submit_recommendation"}],
-                    "observations": [],
-                }
+            recorder.add_step(
+                step_index=1,
+                decision_reason_code="direct_submit",
+                tool_name="submit_recommendation",
+                actions=[{"tool": "submit_recommendation"}],
+                evidence_ids=[eid for m in draft for eid in m.evidence_ids],
             )
             gr = self.guard.validate_submission(draft, allowed, by_id, evidence)
-            return {
-                "ok": gr.ok,
-                "merchants": gr.merchants,
-                "errors": gr.errors,
-                "steps": steps,
-                "model_calls": model_calls,
-                "candidates": candidates,
-                "evidence_index": evidence,
-            }
+            recorder.add_guard({"ok": gr.ok, "errors": gr.errors, "soft_dropped": gr.soft_dropped})
+            return self._pack(gr, recorder, candidates, evidence)
 
-        # REACT path
         max_steps = self.settings.react_max_steps
-        draft: list[RecommendedMerchant] | None = None
         for step in range(1, max_steps + 1):
-            model_calls += 1
+            recorder.bump_model()
             if step == 1 and snapshot.short_term:
-                # compare top engine vs short-term match
                 short = max(snapshot.short_term, key=lambda x: x.confidence).topic
                 left = candidates[0].merchant_id if candidates else None
                 right_cand = next((c for c in candidates if c.category == short), None)
                 if left and right_cand and right_cand.merchant_id != left:
                     obs = self.tools.execute(
                         "compare_candidates",
-                        {"left_id": left, "right_id": right_cand.merchant_id, "aspects": ["price", "distance", "category"]},
+                        {
+                            "left_id": left,
+                            "right_id": right_cand.merchant_id,
+                            "aspects": ["price", "distance", "category"],
+                        },
                         allowed_ids=allowed,
                         snapshot=snapshot,
                         scene=scene,
@@ -89,14 +84,15 @@ class AgentLoop:
                             facts={"compare": True, **obs.get("data", {})},
                             source="tool",
                         )
-                    steps.append(
-                        {
-                            "step_index": step,
-                            "decision_reason_code": "need_compare_short_term_intent",
-                            "missing_evidence": ["compare"],
-                            "actions": [{"tool": "compare_candidates"}],
-                            "observations": [obs],
-                        }
+                    recorder.add_step(
+                        step_index=step,
+                        decision_reason_code="need_compare_short_term_intent",
+                        tool_name="compare_candidates",
+                        result_status="ok" if obs.get("ok") else "error",
+                        evidence_ids=[obs.get("evidence_id")] if obs.get("evidence_id") else [],
+                        actions=[{"tool": "compare_candidates"}],
+                        observations=[obs],
+                        extra={"missing_evidence": ["compare"]},
                     )
                     continue
 
@@ -109,13 +105,13 @@ class AgentLoop:
                     scene=scene,
                     candidates=candidates,
                 )
-                steps.append(
-                    {
-                        "step_index": step,
-                        "decision_reason_code": "insufficient_candidates",
-                        "actions": [{"tool": "supplement_recall"}],
-                        "observations": [obs],
-                    }
+                recorder.add_step(
+                    step_index=step,
+                    decision_reason_code="insufficient_candidates",
+                    tool_name="supplement_recall",
+                    result_status="ok" if obs.get("ok") else "error",
+                    actions=[{"tool": "supplement_recall"}],
+                    observations=[obs],
                 )
                 if obs.get("ok"):
                     new_raw = obs["data"]["new_candidates"]
@@ -126,37 +122,41 @@ class AgentLoop:
                     evidence.update(self.guard.build_evidence_index(new_cands))
                 continue
 
-            # submit
             draft = self._mock_select(snapshot, candidates, prefer_short_term=True)
-            steps.append(
-                {
-                    "step_index": step,
-                    "decision_reason_code": "react_submit",
-                    "actions": [{"tool": "submit_recommendation"}],
-                    "observations": [],
-                }
+            recorder.add_step(
+                step_index=step,
+                decision_reason_code="react_submit",
+                tool_name="submit_recommendation",
+                actions=[{"tool": "submit_recommendation"}],
+                evidence_ids=[eid for m in draft for eid in m.evidence_ids],
             )
             gr = self.guard.validate_submission(draft, allowed, by_id, evidence)
-            return {
-                "ok": gr.ok,
-                "merchants": gr.merchants,
-                "errors": gr.errors,
-                "steps": steps,
-                "model_calls": model_calls,
-                "candidates": candidates,
-                "evidence_index": evidence,
-            }
+            recorder.add_guard({"ok": gr.ok, "errors": gr.errors, "soft_dropped": gr.soft_dropped})
+            return self._pack(gr, recorder, candidates, evidence)
 
-        # exhausted
+        recorder.set_meta(fallback_reason="max_steps")
         return {
             "ok": False,
             "merchants": [],
             "errors": ["max_steps"],
-            "steps": steps,
-            "model_calls": model_calls,
+            "steps": recorder.steps,
+            "model_calls": recorder.model_calls,
             "candidates": candidates,
             "evidence_index": evidence,
             "fallback_reason": "max_steps",
+            "trace": recorder.summary(),
+        }
+
+    def _pack(self, gr, recorder: TraceRecorder, candidates, evidence) -> dict[str, Any]:
+        return {
+            "ok": gr.ok,
+            "merchants": gr.merchants,
+            "errors": gr.errors,
+            "steps": recorder.steps,
+            "model_calls": recorder.model_calls,
+            "candidates": candidates,
+            "evidence_index": evidence,
+            "trace": recorder.summary(),
         }
 
     def _allowed_ids(self, candidates: list[CandidateMerchant]) -> set[str]:

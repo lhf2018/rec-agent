@@ -5,12 +5,14 @@ from typing import Any
 from rec_agent.catalog import Catalog
 from rec_agent.engine import RecommendationEngine
 from rec_agent.models import CandidateMerchant, Scene, UserSnapshot
+from rec_agent.runtime.registry import ToolRegistry
 
 
 class ToolExecutor:
     def __init__(self, catalog: Catalog, engine: RecommendationEngine) -> None:
         self.catalog = catalog
         self.engine = engine
+        self.registry = ToolRegistry()
         self.supplement_used = False
 
     def reset(self) -> None:
@@ -26,6 +28,11 @@ class ToolExecutor:
         scene: Scene,
         candidates: list[CandidateMerchant],
     ) -> dict[str, Any]:
+        if not self.registry.is_allowed(name):
+            return {"ok": False, "error_code": "invalid_argument", "message": f"unknown tool {name}"}
+        arg_err = self.registry.validate_args(name, args)
+        if arg_err:
+            return {"ok": False, "error_code": "invalid_argument", "message": arg_err}
         if name == "get_merchant_detail":
             mid = args.get("merchant_id")
             if mid not in allowed_ids:

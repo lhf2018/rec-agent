@@ -19,8 +19,10 @@
 ```text
 rec_agent/          # 核心代码
   policy.py          # 资格 / 机会 / 路由 / 交付
+  snapshot.py        # 只读用户快照（过期过滤）
   engine.py          # 召回 · 硬过滤 · 排序
-  runtime/           # Agent 循环 · Guard · Trace
+  feedback.py        # 负向反馈（不经 Agent）
+  runtime/           # loop · guard · registry · trace
   api.py             # FastAPI
   service.py         # 任务编排
 fixtures/            # 商家与用户种子

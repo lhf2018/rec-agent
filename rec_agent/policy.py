@@ -37,13 +37,30 @@ class DeliveryResult:
     reason_code: str | None = None
 
 
+def _parse_dt(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def _parse_hour(occurred_at: str) -> int:
-    # supports ISO with timezone
     try:
         dt = datetime.fromisoformat(occurred_at)
         return dt.hour
     except ValueError:
         return 12
+
+
+def _scene_time(occurred_at: str) -> datetime:
+    dt = _parse_dt(occurred_at)
+    if dt is None:
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 class Policy:
@@ -53,29 +70,58 @@ class Policy:
     def check_eligibility(self, snapshot: UserSnapshot, scene: Scene) -> EligibilityResult:
         if not snapshot.allow_personalized:
             return EligibilityResult(False, "not_authorized")
+        if "*" in snapshot.category_opt_out or "active_recommend" in snapshot.category_opt_out:
+            return EligibilityResult(False, "category_opt_out")
+
         hour = _parse_hour(scene.occurred_at)
         start, end = self.settings.dnd_start_hour, self.settings.dnd_end_hour
         in_dnd = hour >= start or hour < end if start > end else start <= hour < end
         if in_dnd:
             return EligibilityResult(False, "dnd_window")
+
         if scene.location is None:
             return EligibilityResult(False, "invalid_scene")
-        if snapshot.category_opt_out and set(snapshot.category_opt_out) & set(snapshot.long_term_categories):
-            # simplified: if opted out of all interest cats
-            pass
-        # freq / cooldown checked via recent_impressions length as MVP proxy
+
         if len(snapshot.recent_impressions) >= self.settings.freq_cap_per_day:
             return EligibilityResult(False, "freq_cap")
+
+        last = _parse_dt(snapshot.last_success_at)
+        if last is not None:
+            now = _scene_time(scene.occurred_at)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if now - last < timedelta(minutes=self.settings.cooldown_minutes):
+                return EligibilityResult(False, "cooldown")
+
         return EligibilityResult(True, None)
 
     def check_opportunity(self, snapshot: UserSnapshot, scene: Scene) -> OpportunityDecision:
-        # similar suppress: recent impressions overlap frequent / short-term topics heavily
         if snapshot.recent_conversions:
             return OpportunityDecision(OpportunityResult.suppress, "recent_conversion_suppress")
-        # short-interval duplicate: if same scene_id pattern already impressed (MVP: impressions contain scene)
+
         if scene.scene_id in snapshot.recent_impressions:
             return OpportunityDecision(OpportunityResult.suppress, "duplicate_scene_suppress")
-        # if user just marked not interested on many nearby options — still allow engine, hard filter handles
+
+        # similar suppress (MVP): only when short-term topic matches recently shown category
+        last = _parse_dt(snapshot.last_success_at)
+        if last is not None and snapshot.recent_shown_categories and snapshot.short_term:
+            now = _scene_time(scene.occurred_at)
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if now - last < timedelta(minutes=self.settings.similar_suppress_minutes):
+                short_topics = {i.topic for i in snapshot.short_term}
+                if short_topics & set(snapshot.recent_shown_categories):
+                    return OpportunityDecision(
+                        OpportunityResult.suppress, "similar_category_suppress"
+                    )
+
+        if (
+            len(snapshot.hard.not_interested_merchants) >= 5
+            and not snapshot.short_term
+            and not snapshot.frequent_merchants
+        ):
+            return OpportunityDecision(OpportunityResult.suppress, "sparse_after_negative")
+
         return OpportunityDecision(OpportunityResult.recommend_now, "opportunity_ok")
 
     def route(
@@ -98,7 +144,6 @@ class Policy:
         if need_react and enable_react:
             return RouteDecision(RouteMode.react, "react_gap")
         if engine.facts_complete and not engine.intent_conflict and not engine.need_freshness:
-            # prefer rule engine when fully clear
             return RouteDecision(RouteMode.rule_engine, "facts_complete_no_conflict")
         return RouteDecision(RouteMode.direct, "need_natural_reason")
 
@@ -107,7 +152,6 @@ class Policy:
         snapshot: UserSnapshot,
         merchant_ids: list[str],
     ) -> DeliveryResult:
-        # re-check authorization
         if not snapshot.allow_personalized:
             return DeliveryResult(False, "delivery_blocked_not_authorized")
         for mid in merchant_ids:
@@ -116,6 +160,15 @@ class Policy:
             if mid in snapshot.hard.blocked_merchants:
                 return DeliveryResult(False, "delivery_blocked_blocked")
         return DeliveryResult(True, None)
+
+    def budget_ok(self, deadline_at: datetime, now: datetime | None = None) -> bool:
+        clock = now or datetime.now(timezone.utc)
+        if deadline_at.tzinfo is None:
+            deadline_at = deadline_at.replace(tzinfo=timezone.utc)
+        if clock.tzinfo is None:
+            clock = clock.replace(tzinfo=timezone.utc)
+        # need enough room for one model call (~2s buffer of remaining)
+        return (deadline_at - clock).total_seconds() > 2.0
 
 
 def template_reason(c) -> str:
