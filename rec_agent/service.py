@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from mini_agent.catalog import Catalog, get_catalog
-from mini_agent.config import Settings, get_settings
-from mini_agent.engine import RecommendationEngine
-from mini_agent.models import (
+from rec_agent.catalog import Catalog, get_catalog
+from rec_agent.config import Settings, get_settings
+from rec_agent.engine import RecommendationEngine
+from rec_agent.models import (
     CreateTaskRequest,
     FeedbackRequest,
     OpportunityResult,
@@ -14,11 +14,11 @@ from mini_agent.models import (
     RouteMode,
     TaskStatus,
 )
-from mini_agent.policy import Policy, template_reason
-from mini_agent.runtime.guard import Guard
-from mini_agent.runtime.loop import AgentLoop
-from mini_agent.store import Store
-from mini_agent.tools import ToolExecutor
+from rec_agent.policy import Policy, template_reason
+from rec_agent.runtime.guard import Guard
+from rec_agent.runtime.loop import AgentLoop
+from rec_agent.store import Store
+from rec_agent.tools import ToolExecutor
 
 
 class RecommendationService:
@@ -192,7 +192,7 @@ class RecommendationService:
         return result
 
     def _rule_engine_result(self, baseline) -> list[RecommendedMerchant]:
-        from mini_agent.models import RecommendedProduct
+        from rec_agent.models import RecommendedProduct
 
         out: list[RecommendedMerchant] = []
         for c in baseline[: self.settings.max_merchants]:

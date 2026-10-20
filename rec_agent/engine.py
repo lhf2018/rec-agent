@@ -1,12 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from mini_agent.catalog import Catalog
-from mini_agent.config import Settings, get_settings
-from mini_agent.models import (
+from rec_agent.catalog import Catalog
+from rec_agent.config import Settings, get_settings
+from rec_agent.models import (
     CandidateMerchant,
     CandidateProduct,
     DroppedItem,

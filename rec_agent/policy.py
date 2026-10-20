@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from mini_agent.config import Settings, get_settings
-from mini_agent.models import (
+from rec_agent.config import Settings, get_settings
+from rec_agent.models import (
     EngineOutput,
     OpportunityResult,
     RouteMode,

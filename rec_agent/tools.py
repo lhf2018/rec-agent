@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
-from mini_agent.catalog import Catalog
-from mini_agent.engine import RecommendationEngine
-from mini_agent.models import CandidateMerchant, Scene, UserSnapshot
+from rec_agent.catalog import Catalog
+from rec_agent.engine import RecommendationEngine
+from rec_agent.models import CandidateMerchant, Scene, UserSnapshot
 
 
 class ToolExecutor:

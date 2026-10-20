@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from mini_agent.models import Merchant, Product, UserSnapshot
+from rec_agent.models import Merchant, Product, UserSnapshot
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "fixtures"

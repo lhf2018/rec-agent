@@ -1,6 +1,6 @@
-from mini_agent.catalog import Catalog
-from mini_agent.engine import RecommendationEngine
-from mini_agent.models import Location, Scene, TriggerType
+﻿from rec_agent.catalog import Catalog
+from rec_agent.engine import RecommendationEngine
+from rec_agent.models import Location, Scene, TriggerType
 
 
 def _scene(scene_id: str = "s1") -> Scene:

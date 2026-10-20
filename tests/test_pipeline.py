@@ -1,9 +1,9 @@
-from pathlib import Path
+﻿from pathlib import Path
 
-from mini_agent.catalog import Catalog
-from mini_agent.models import CreateTaskRequest, FeedbackRequest, Location, Scene, TriggerType
-from mini_agent.service import RecommendationService
-from mini_agent.store import Store
+from rec_agent.catalog import Catalog
+from rec_agent.models import CreateTaskRequest, FeedbackRequest, Location, Scene, TriggerType
+from rec_agent.service import RecommendationService
+from rec_agent.store import Store
 
 
 def _req(user_id: str, scene_id: str, occurred_at: str = "2026-10-20T12:10:00+08:00") -> CreateTaskRequest:

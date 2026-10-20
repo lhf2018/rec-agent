@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sqlite3
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "mini_agent.db"
+DB_PATH = ROOT / "data" / "rec_agent.db"
 
 
 class Store:

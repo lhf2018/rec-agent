@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
-from mini_agent.config import Settings, get_settings
-from mini_agent.models import (
+from rec_agent.config import Settings, get_settings
+from rec_agent.models import (
     CandidateMerchant,
     RecommendedMerchant,
     RecommendedProduct,
@@ -11,8 +11,8 @@ from mini_agent.models import (
     Scene,
     UserSnapshot,
 )
-from mini_agent.runtime.guard import Evidence, Guard
-from mini_agent.tools import ToolExecutor
+from rec_agent.runtime.guard import Evidence, Guard
+from rec_agent.tools import ToolExecutor
 
 
 class AgentLoop:

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sys
@@ -7,16 +7,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from mini_agent.catalog import Catalog
-from mini_agent.config import Settings
-from mini_agent.engine import RecommendationEngine
-from mini_agent.models import CreateTaskRequest, Location, Scene, TriggerType
-from mini_agent.policy import template_reason
-from mini_agent.runtime.guard import Guard
-from mini_agent.runtime.loop import AgentLoop
-from mini_agent.service import RecommendationService
-from mini_agent.store import Store
-from mini_agent.tools import ToolExecutor
+from rec_agent.catalog import Catalog
+from rec_agent.config import Settings
+from rec_agent.engine import RecommendationEngine
+from rec_agent.models import CreateTaskRequest, Location, Scene, TriggerType
+from rec_agent.policy import template_reason
+from rec_agent.runtime.guard import Guard
+from rec_agent.runtime.loop import AgentLoop
+from rec_agent.service import RecommendationService
+from rec_agent.store import Store
+from rec_agent.tools import ToolExecutor
 
 
 def _scene(scene_id: str) -> Scene:
@@ -78,7 +78,7 @@ def run_agent_arm(catalog: Catalog, user_id: str, scene_id: str, mode: str) -> d
         eng = RecommendationEngine(cat)
         out = eng.run(snap, _scene(scene_id))
         loop = AgentLoop(ToolExecutor(cat, eng), Guard(), settings2)
-        from mini_agent.models import RouteMode
+        from rec_agent.models import RouteMode
 
         ao = loop.run(RouteMode.direct, snap, _scene(scene_id), out.candidates)
         merchants = [
@@ -103,7 +103,7 @@ def run_agent_arm(catalog: Catalog, user_id: str, scene_id: str, mode: str) -> d
         eng = RecommendationEngine(cat)
         out = eng.run(snap, _scene(scene_id))
         loop = AgentLoop(ToolExecutor(cat, eng), Guard())
-        from mini_agent.models import RouteMode
+        from rec_agent.models import RouteMode
 
         ao = loop.run(RouteMode.react, snap, _scene(scene_id), out.candidates)
         merchants = [

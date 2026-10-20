@@ -1,10 +1,10 @@
-from functools import lru_cache
+﻿from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="MINI_AGENT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="REC_AGENT_", env_file=".env", extra="ignore")
 
     use_mock_llm: bool = True
     llm_api_key: str = ""

@@ -1,7 +1,7 @@
-from mini_agent.catalog import Catalog
-from mini_agent.engine import RecommendationEngine
-from mini_agent.models import Location, Scene, TriggerType
-from mini_agent.policy import Policy
+﻿from rec_agent.catalog import Catalog
+from rec_agent.engine import RecommendationEngine
+from rec_agent.models import Location, Scene, TriggerType
+from rec_agent.policy import Policy
 
 
 def _scene(hour_iso: str = "2026-10-20T12:10:00+08:00", scene_id: str = "s1") -> Scene:

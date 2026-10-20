@@ -1,4 +1,4 @@
-# rec-agent / mini-agent
+﻿# rec-agent
 
 场景触发的**主动推荐 Agent** MVP：用户不搜索、不对话时，系统根据场景与用户状态判断是否值得推荐；由推荐引擎产出封闭候选，再按路由走规则 / 一次模型决策 / ReAct；经独立校验与交付治理后站内展示，并支持反馈闭环。
 
@@ -17,7 +17,7 @@
 ## 仓库结构
 
 ```text
-mini_agent/          # 核心代码
+rec_agent/          # 核心代码
   policy.py          # 资格 / 机会 / 路由 / 交付
   engine.py          # 召回 · 硬过滤 · 排序
   runtime/           # Agent 循环 · Guard · Trace
@@ -61,7 +61,7 @@ python eval/runner.py
 ### 启动服务
 
 ```bash
-uvicorn mini_agent.api:app --reload --port 8000
+uvicorn rec_agent.api:app --reload --port 8000
 ```
 
 浏览器打开 <http://127.0.0.1:8000/>  
@@ -100,7 +100,7 @@ curl -X POST http://127.0.0.1:8000/v1/recommendation-tasks ^
 
 ## 配置
 
-见 `.env.example`。常用环境变量前缀 `MINI_AGENT_`：
+见 `.env.example`。常用环境变量前缀 `REC_AGENT_`：
 
 | 变量 | 默认 | 含义 |
 | --- | --- | --- |

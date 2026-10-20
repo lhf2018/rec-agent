@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -6,10 +6,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from mini_agent.models import CreateTaskRequest, FeedbackRequest
-from mini_agent.service import RecommendationService
+from rec_agent.models import CreateTaskRequest, FeedbackRequest
+from rec_agent.service import RecommendationService
 
-app = FastAPI(title="mini-agent", version="0.1.0")
+app = FastAPI(title="rec-agent", version="0.1.0")
 service = RecommendationService()
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -22,7 +22,7 @@ def index():
     index_path = WEB_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
-    return {"message": "mini-agent API. See /docs"}
+    return {"message": "rec-agent API. See /docs"}
 
 
 @app.post("/v1/recommendation-tasks")
