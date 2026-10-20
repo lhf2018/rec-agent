@@ -1,0 +1,255 @@
+{
+  "tenant_id": "t_demo",
+  "merchants": [
+    {
+      "merchant_id": "m_noodle_1",
+      "name": "清汤面馆",
+      "category": "面食",
+      "tags": ["面食", "清淡"],
+      "lng": 121.47,
+      "lat": 31.23,
+      "is_open": true,
+      "delivery_radius_m": 4000,
+      "avg_price": 28,
+      "status": "online",
+      "score": 4.7,
+      "products": [
+        {
+          "product_id": "p_noodle_tomato",
+          "merchant_id": "m_noodle_1",
+          "name": "番茄鸡蛋面",
+          "price": 28,
+          "in_stock": true,
+          "dietary_tags": ["蛋"],
+          "category": "面食",
+          "description": "家常口味"
+        },
+        {
+          "product_id": "p_noodle_beef",
+          "merchant_id": "m_noodle_1",
+          "name": "牛肉面",
+          "price": 36,
+          "in_stock": true,
+          "dietary_tags": [],
+          "category": "面食"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_noodle_2",
+      "name": "巷口拉面",
+      "category": "面食",
+      "tags": ["面食"],
+      "lng": 121.472,
+      "lat": 31.231,
+      "is_open": true,
+      "delivery_radius_m": 3500,
+      "avg_price": 32,
+      "status": "online",
+      "score": 4.5,
+      "products": [
+        {
+          "product_id": "p_ramen_1",
+          "merchant_id": "m_noodle_2",
+          "name": "豚骨拉面",
+          "price": 38,
+          "in_stock": true,
+          "dietary_tags": [],
+          "category": "面食"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_spicy_1",
+      "name": "火辣香锅",
+      "category": "香锅",
+      "tags": ["辣", "香锅"],
+      "lng": 121.471,
+      "lat": 31.229,
+      "is_open": true,
+      "delivery_radius_m": 4000,
+      "avg_price": 45,
+      "status": "online",
+      "score": 4.6,
+      "products": [
+        {
+          "product_id": "p_spicy_1",
+          "merchant_id": "m_spicy_1",
+          "name": "麻辣香锅",
+          "price": 48,
+          "in_stock": true,
+          "dietary_tags": ["辣"],
+          "category": "香锅"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_closed_1",
+      "name": "打烊烧烤",
+      "category": "烧烤",
+      "tags": ["烧烤"],
+      "lng": 121.47,
+      "lat": 31.23,
+      "is_open": false,
+      "delivery_radius_m": 4000,
+      "avg_price": 50,
+      "status": "online",
+      "score": 4.8,
+      "products": [
+        {
+          "product_id": "p_bbq_1",
+          "merchant_id": "m_closed_1",
+          "name": "羊肉串",
+          "price": 12,
+          "in_stock": true,
+          "dietary_tags": [],
+          "category": "烧烤"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_far_1",
+      "name": "远方咖啡",
+      "category": "咖啡",
+      "tags": ["咖啡"],
+      "lng": 121.55,
+      "lat": 31.30,
+      "is_open": true,
+      "delivery_radius_m": 2000,
+      "avg_price": 35,
+      "status": "online",
+      "score": 4.4,
+      "products": [
+        {
+          "product_id": "p_coffee_1",
+          "merchant_id": "m_far_1",
+          "name": "美式咖啡",
+          "price": 22,
+          "in_stock": true,
+          "dietary_tags": [],
+          "category": "咖啡"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_expensive_1",
+      "name": "高端日料",
+      "category": "日料",
+      "tags": ["日料"],
+      "lng": 121.469,
+      "lat": 31.228,
+      "is_open": true,
+      "delivery_radius_m": 5000,
+      "avg_price": 180,
+      "status": "online",
+      "score": 4.9,
+      "products": [
+        {
+          "product_id": "p_sushi_1",
+          "merchant_id": "m_expensive_1",
+          "name": "刺身拼盘",
+          "price": 198,
+          "in_stock": true,
+          "dietary_tags": ["海鲜"],
+          "category": "日料"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_salad_1",
+      "name": "轻食沙拉站",
+      "category": "轻食",
+      "tags": ["轻食", "清淡"],
+      "lng": 121.468,
+      "lat": 31.232,
+      "is_open": true,
+      "delivery_radius_m": 4000,
+      "avg_price": 36,
+      "status": "online",
+      "score": 4.3,
+      "products": [
+        {
+          "product_id": "p_salad_1",
+          "merchant_id": "m_salad_1",
+          "name": "鸡胸肉沙拉",
+          "price": 34,
+          "in_stock": true,
+          "dietary_tags": [],
+          "category": "轻食"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_burger_hot",
+      "name": "街区汉堡热店",
+      "category": "汉堡",
+      "tags": ["汉堡", "热门"],
+      "lng": 121.473,
+      "lat": 31.227,
+      "is_open": true,
+      "delivery_radius_m": 4500,
+      "avg_price": 40,
+      "status": "online",
+      "score": 4.85,
+      "products": [
+        {
+          "product_id": "p_burger_1",
+          "merchant_id": "m_burger_hot",
+          "name": "芝士牛肉堡",
+          "price": 42,
+          "in_stock": true,
+          "dietary_tags": [],
+          "category": "汉堡"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_offline_1",
+      "name": "下线奶茶",
+      "category": "饮品",
+      "tags": ["奶茶"],
+      "lng": 121.47,
+      "lat": 31.23,
+      "is_open": true,
+      "delivery_radius_m": 4000,
+      "avg_price": 18,
+      "status": "offline",
+      "score": 4.2,
+      "products": [
+        {
+          "product_id": "p_tea_1",
+          "merchant_id": "m_offline_1",
+          "name": "珍珠奶茶",
+          "price": 16,
+          "in_stock": false,
+          "dietary_tags": [],
+          "category": "饮品"
+        }
+      ]
+    },
+    {
+      "merchant_id": "m_blocked_demo",
+      "name": "用户拉黑店",
+      "category": "面食",
+      "tags": ["面食"],
+      "lng": 121.4705,
+      "lat": 31.2305,
+      "is_open": true,
+      "delivery_radius_m": 4000,
+      "avg_price": 30,
+      "status": "online",
+      "score": 4.1,
+      "products": [
+        {
+          "product_id": "p_blocked_1",
+          "merchant_id": "m_blocked_demo",
+          "name": "普通面",
+          "price": 26,
+          "in_stock": true,
+          "dietary_tags": [],
+          "category": "面食"
+        }
+      ]
+    }
+  ]
+}

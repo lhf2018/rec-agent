@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>mini-agent 演示</title>
+  <style>
+    :root { --bg:#0f1419; --card:#1a222c; --line:#334155; --text:#e8eef4; --muted:#94a3b8; --accent:#2dd4bf; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }
+    main { max-width: 960px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 1.4rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+    select, button, input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: #111827; color: var(--text); }
+    button { background: var(--accent); color: #042f2e; font-weight: 600; border: none; cursor: pointer; margin-top: 14px; }
+    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--muted); max-height: 420px; overflow: auto; }
+    .merchant { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+    .meta { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>主动推荐 Agent · 本地演示</h1>
+    <p class="meta">默认 mock 决策，无需 API Key。用户与场景来自 fixtures。</p>
+    <div class="row">
+      <div class="card">
+        <label>用户</label>
+        <select id="user">
+          <option value="u_noodle_regular">面食老客</option>
+          <option value="u_dietary">忌口+拉黑</option>
+          <option value="u_newcomer">新客</option>
+          <option value="u_budget">低客单</option>
+          <option value="u_conflict">长短冲突</option>
+          <option value="u_opt_out">关闭个性化</option>
+        </select>
+        <label>场景 ID（可改以避开幂等）</label>
+        <input id="scene" value="demo_1" />
+        <button id="run">发起推荐</button>
+        <button id="ni" style="background:#fb7185;color:#fff;margin-top:8px">对第一家不感兴趣</button>
+      </div>
+      <div class="card">
+        <div class="meta" id="summary">尚未请求</div>
+        <div id="list"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="meta">Trace</div>
+      <pre id="trace">{}</pre>
+    </div>
+  </main>
+  <script>
+    let lastTask = null;
+    const $ = (id) => document.getElementById(id);
+
+    async function run() {
+      const body = {
+        tenant_id: "t_demo",
+        user_id: $("user").value,
+        scene: {
+          scene_id: $("scene").value,
+          trigger: "impression",
+          channel: "nearby",
+          occurred_at: "2026-10-20T12:10:00+08:00",
+          location: { lng: 121.47, lat: 31.23, district: "南京西路" },
+          radius_m: 3000,
+          meal_period: "lunch"
+        }
+      };
+      const res = await fetch("/v1/recommendation-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      lastTask = await res.json();
+      $("summary").textContent = `${lastTask.status} · route=${lastTask.route_mode || "-"} · reason=${lastTask.decision_reason_code || "-"} · source=${lastTask.source || "-"}`;
+      $("list").innerHTML = (lastTask.merchants || []).map(m => `
+        <div class="merchant">
+          <strong>${m.name || m.merchant_id}</strong>
+          <div class="meta">${m.reason}</div>
+          <div class="meta">商品: ${(m.products||[]).map(p => p.name || p.product_id).join(", ")}</div>
+        </div>`).join("") || "<div class='meta'>无商家</div>";
+      const tr = await fetch(`/v1/recommendation-tasks/${lastTask.task_id}/trace`);
+      $("trace").textContent = JSON.stringify(await tr.json(), null, 2);
+      $("scene").value = "demo_" + Math.floor(Math.random()*10000);
+    }
+
+    async function notInterested() {
+      if (!lastTask || !(lastTask.merchants||[]).length) return alert("先发起一次推荐");
+      const mid = lastTask.merchants[0].merchant_id;
+      const res = await fetch(`/v1/recommendations/${lastTask.task_id}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_type: "not_interested", merchant_id: mid })
+      });
+      const data = await res.json();
+      alert(data.ok ? "已记录，再点发起推荐看是否过滤" : JSON.stringify(data));
+    }
+
+    $("run").onclick = run;
+    $("ni").onclick = notInterested;
+  </script>
+</body>
+</html>

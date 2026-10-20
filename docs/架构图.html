@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>主动推荐 Agent · 架构方案 v1.5</title>
+  <style>
+    :root {
+      --bg: #0b0f13; --surface: #141a21; --surface-2: #1c2430; --line: #2f3b4a;
+      --text: #eef2f6; --muted: #8b9cb0; --accent: #2dd4bf;
+      --accent-dim: rgba(45,212,191,.12); --in: #60a5fa; --decide: #2dd4bf;
+      --check: #fbbf24; --out: #c084fc; --fail: #fb7185; --ok: #34d399;
+      --font: "IBM Plex Sans","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+      --mono: "IBM Plex Mono","Cascadia Code",Consolas,monospace;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:var(--font);background:radial-gradient(ellipse 55% 35% at 50% 0%,rgba(45,212,191,.08),transparent),var(--bg);color:var(--text);min-height:100vh;line-height:1.5}
+    .page{max-width:1100px;margin:0 auto;padding:28px 18px 72px}
+    .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+    h1{font-size:clamp(1.3rem,2.4vw,1.8rem);font-weight:600;letter-spacing:-.02em;margin-bottom:10px}
+    .lead{color:var(--muted);font-size:.9rem;max-width:860px}
+    .badges{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 6px}
+    .badge{font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+    .badge.warn{border-color:rgba(251,191,36,.5);color:var(--check)}
+    .badge.ok{border-color:rgba(52,211,153,.45);color:var(--ok)}
+    .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:18px 0 20px;position:sticky;top:0;z-index:5;padding:8px 0;background:linear-gradient(var(--bg) 70%,transparent)}
+    .tab{font-family:var(--mono);font-size:11px;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer}
+    .tab:hover{color:var(--text);border-color:var(--accent)}
+    .tab.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+    .panel{display:none}.panel.active{display:block;animation:fade .28s ease}
+    @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+    h2{font-size:1.05rem;margin:0 0 10px}h3{font-size:.88rem;margin-bottom:6px}
+    .hint{font-size:.76rem;color:var(--muted);margin-bottom:12px}
+    .callout{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:14px 16px;margin-bottom:14px;font-size:.84rem;color:var(--muted)}
+    .callout strong{color:var(--text)}.callout.warn{border-left-color:var(--check)}.callout.fail{border-left-color:var(--fail)}
+    .grid{display:grid;gap:10px}.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:1fr 1fr 1fr}.g4{grid-template-columns:repeat(4,1fr)}
+    @media(max-width:860px){.g4,.g3{grid-template-columns:1fr 1fr}.g2{grid-template-columns:1fr}}
+    @media(max-width:520px){.g4,.g3,.g2{grid-template-columns:1fr}}
+    .card{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+    .card p,.card li{font-size:.74rem;color:var(--muted)}.card ul{padding-left:16px;margin-top:6px}
+    .card .why{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:.7rem;color:var(--accent)}
+    .tag{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid var(--line);color:var(--muted);margin-bottom:6px}
+    .tag.in{border-color:rgba(96,165,250,.5);color:var(--in)}.tag.decide{border-color:rgba(45,212,191,.5);color:var(--decide)}
+    .tag.check{border-color:rgba(251,191,36,.5);color:var(--check)}.tag.fail{border-color:rgba(251,113,133,.5);color:var(--fail)}
+    .flow{display:flex;flex-direction:column}
+    .stage{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;border-left:3px solid var(--line)}
+    .stage.in{border-left-color:var(--in)}.stage.decide{border-left-color:var(--decide)}.stage.check{border-left-color:var(--check)}.stage.out{border-left-color:var(--out)}.stage.fail{border-left-color:var(--fail)}
+    .stage-h{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px}
+    .stage-h h3{font-size:.92rem;margin:0}
+    .conn{height:26px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;color:var(--muted);position:relative}
+    .conn::before{content:"";position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+    .conn span{position:relative;z-index:1;background:var(--bg);padding:1px 8px;border:1px solid var(--line);border-radius:999px}
+    .conn.fail-line span{border-color:rgba(251,113,133,.45);color:var(--fail)}
+    table{width:100%;border-collapse:collapse;font-size:.76rem;margin:10px 0 14px;background:var(--surface);border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+    th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--line);vertical-align:top}
+    th{background:var(--surface-2);color:var(--muted);font-weight:600;font-size:.7rem}
+    tr:last-child td{border-bottom:none}
+    code{font-family:var(--mono);font-size:.7rem;color:var(--accent)}
+    .status{display:inline-block;font-size:10px;padding:2px 7px;border-radius:4px;font-family:var(--mono);margin-left:4px}
+    .s-done{background:rgba(52,211,153,.12);color:var(--ok);border:1px solid rgba(52,211,153,.35)}
+    .s-open{background:rgba(251,191,36,.12);color:var(--check);border:1px solid rgba(251,191,36,.35)}
+    footer{margin-top:32px;padding-top:14px;border-top:1px solid var(--line);font-size:.7rem;color:var(--muted);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+    footer a{color:var(--accent);text-decoration:none}
+    .react-cycle{display:grid;grid-template-columns:1fr 40px 1fr;grid-template-rows:auto 28px auto;gap:4px;max-width:500px;margin:12px auto;align-items:center}
+    .node{border-radius:12px;padding:12px;text-align:center;border:1px solid;background:var(--surface-2)}
+    .node .l{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+    .node .d{font-size:.7rem;color:var(--muted)}
+    .n1{border-color:rgba(56,189,248,.5)}.n1 .l{color:#38bdf8}
+    .n2{border-color:rgba(251,191,36,.5)}.n2 .l{color:var(--check)}
+    .n3{border-color:rgba(167,139,250,.5)}.n3 .l{color:#a78bfa}
+    .n4{border-color:rgba(52,211,153,.5)}.n4 .l{color:var(--ok)}
+    .arr{text-align:center;color:var(--muted);font-size:14px}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="eyebrow">mini-agent · 设计方案 v1.5 · 代码未落地</div>
+    <h1>在合适时机主动推荐，而不是每次触发都推一把</h1>
+    <p class="lead">
+      资格回答「能不能推」，机会回答「值不值得推」，引擎给出封闭候选，Agent 只在有缺口时做受控决策与解释，
+      校验与交付决定「能不能给用户看」。用三臂评测证明 Agent 是否真有增益。
+    </p>
+    <div class="badges">
+      <span class="badge ok">v1.5 评审修订</span>
+      <span class="badge warn">参数待确认 / 待验证</span>
+      <span class="badge">详评：架构评审-v1.5.md</span>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="judge" type="button">1 评审结论</button>
+      <button class="tab" data-tab="flow" type="button">2 整体流程</button>
+      <button class="tab" data-tab="active" type="button">3 主动决策</button>
+      <button class="tab" data-tab="route" type="button">4 路由与 Agent</button>
+      <button class="tab" data-tab="trust" type="button">5 可靠与降级</button>
+      <button class="tab" data-tab="mvp" type="button">6 MVP 与验证</button>
+    </div>
+
+    <section class="panel active" id="judge">
+      <div class="callout">
+        <strong>总判：</strong>具备主动推荐 Agent 的基本骨架（引擎与 Agent 分离、封闭候选、独立校验、生成≠交付），
+        但 v1.4 的「主动性」偏弱——更像事件触发后尝试推荐。v1.5 补上<strong style="color:var(--text)">机会判断</strong>、
+        <strong style="color:var(--text)">可编码路由</strong>与<strong style="color:var(--text)">Agent 增益验收</strong>。
+      </div>
+      <div class="grid g3">
+        <div class="card"><span class="tag ok" style="border-color:rgba(52,211,153,.45);color:var(--ok)">优点</span>
+          <ul><li>计算与决策分离</li><li>硬约束不可降级绕过</li><li>有基线对照意识</li></ul></div>
+        <div class="card"><span class="tag fail">原最大问题</span>
+          <ul><li>缺「值不值得推」</li><li>路由条件难落地</li><li>Agent 易变成文案层</li></ul></div>
+        <div class="card"><span class="tag check">优先只改三处</span>
+          <ul><li>机会判断</li><li>可编码路由+增益定义</li><li>用户状态 MVP+三臂评测</li></ul></div>
+      </div>
+      <div class="callout warn" style="margin-top:12px">
+        <strong>最大风险：</strong>验证机制与主动策略不足，略重于 Runtime 架构不足。先写清「何时不调模型、如何证明增益」，再写循环代码。
+      </div>
+      <h2>三种决策必须分开</h2>
+      <table>
+        <thead><tr><th>决策</th><th>问题</th><th>谁负责</th></tr></thead>
+        <tbody>
+          <tr><td>主动决策</td><td>现在要不要发起？</td><td>资格 + 机会（规则）</td></tr>
+          <tr><td>推荐决策</td><td>推哪些、理由？</td><td>引擎 +（可选）Agent</td></tr>
+          <tr><td>交付决策</td><td>能不能给用户看？</td><td>校验 + 交付治理</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="flow">
+      <h2>整体怎么跑</h2>
+      <p class="hint">红色分支 = 不推荐 / 抑制；降级仍须过硬约束，不能免检直出。</p>
+      <div class="flow">
+        <div class="stage in"><div class="stage-h"><h3>① 场景触发 · 建任务</h3><span class="tag in">幂等</span></div>
+          <p class="hint" style="margin:0">曝光 / 刷新 / 定位 / 时段。同一键不重复跑模型。</p></div>
+        <div class="conn"><span>能不能推？</span></div>
+        <div class="stage in"><div class="stage-h"><h3>② 资格 Eligibility</h3><span class="tag in">规则</span></div>
+          <p class="hint" style="margin:0">授权、免打扰、频控、冷却、场景有效、类目拒收。失败 → 不推荐。</p></div>
+        <div class="conn fail-line"><span>否 → skip</span></div>
+        <div class="conn"><span>值不值得推？</span></div>
+        <div class="stage decide"><div class="stage-h"><h3>③ 机会 Opportunity · v1.5</h3><span class="tag decide">规则</span></div>
+          <div class="grid g3">
+            <div class="card"><h3>recommend_now</h3><p>继续引擎</p></div>
+            <div class="card"><h3>suppress</h3><p>本轮不推，等下次信号（相似刚推过、刚转化、短间隔重复等）</p></div>
+            <div class="card"><h3>skip</h3><p>明确不推荐</p></div>
+          </div>
+          <p class="why" style="font-size:.72rem;color:var(--accent);margin-top:8px">第一版不做 delay 定时器；用 suppress + 下次触发近似。</p>
+        </div>
+        <div class="conn"><span>用户快照只读 → 引擎</span></div>
+        <div class="stage in"><div class="stage-h"><h3>④ 封闭候选</h3><span class="tag in">引擎</span></div>
+          <p class="hint" style="margin:0">召回→硬过滤→排序；缓存已硬过滤基线。无候选 → 不推荐。</p></div>
+        <div class="conn"><span>路由</span></div>
+        <div class="stage decide"><div class="stage-h"><h3>⑤ RULE / DIRECT / REACT / FALLBACK</h3><span class="tag decide">可编码</span></div>
+          <p class="hint" style="margin:0">无缺口不进 REACT；能规则出基线就不强制模型。</p></div>
+        <div class="conn"><span>待审核结果</span></div>
+        <div class="stage check"><div class="stage-h"><h3>⑥ Guard → ⑦ 交付 → ⑧ 反馈</h3><span class="tag check">生成 ≠ 展示</span></div>
+          <p class="hint" style="margin:0">硬约束优先；交付再验；不感兴趣进负向（不经 Agent）。</p></div>
+      </div>
+    </section>
+
+    <section class="panel" id="active">
+      <h2>主动决策：资格 vs 机会</h2>
+      <div class="grid g2">
+        <div class="card"><span class="tag in">资格 · 能不能</span>
+          <p>合规与打扰底线。不过这一关，名单再准也不该出现。</p>
+          <div class="why">数字（次数/冷却）待确认</div></div>
+        <div class="card"><span class="tag decide">机会 · 值不值得</span>
+          <p>避免「每次曝光都跑链路」。相似刚推过、刚转化、短间隔重复 → suppress。</p>
+          <div class="why">不用模型估收益（第一版）</div></div>
+      </div>
+      <h2 style="margin-top:14px">用户状态 MVP</h2>
+      <table>
+        <thead><tr><th>层</th><th>内容</th><th>规则</th></tr></thead>
+        <tbody>
+          <tr><td>硬约束</td><td>忌口、拉黑、不感兴趣、价格带</td><td>永远优先，Agent 只读</td></tr>
+          <tr><td>长期</td><td>类目、客单、常点</td><td>单次点击不改长期</td></tr>
+          <tr><td>短期</td><td>规则信号 + 过期</td><td>可与长期冲突 → 触发 REACT</td></tr>
+          <tr><td>场景</td><td>时段、位置、入口</td><td>无 NLP 意图识别</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="route">
+      <h2>何时用 Agent / ReAct</h2>
+      <table>
+        <thead><tr><th>模式</th><th>条件（摘要）</th><th>行为</th></tr></thead>
+        <tbody>
+          <tr><td><code>SKIP</code></td><td>无候选 / 资格或机会已否</td><td>不推荐</td></tr>
+          <tr><td><code>FALLBACK</code></td><td>预算不足或熔断，且有基线</td><td>条件降级，不进模型</td></tr>
+          <tr><td><code>RULE_ENGINE</code></td><td>事实齐全、无冲突、无需刷新</td><td>基线+模板理由，无 LLM</td></tr>
+          <tr><td><code>DIRECT</code></td><td>齐全但需一次模型理由/轻量说明</td><td>一次模型，禁止工具</td></tr>
+          <tr><td><code>REACT</code></td><td>意图冲突 / 要刷新 / 要对比 / 要补召回</td><td>受控多步；补召回≤1</td></tr>
+        </tbody>
+      </table>
+      <div class="react-cycle">
+        <div class="node n1" style="grid-column:1;grid-row:1"><div class="l">思考</div><div class="d">缺口是什么？</div></div>
+        <div class="arr" style="grid-column:2;grid-row:1">→</div>
+        <div class="node n2" style="grid-column:3;grid-row:1"><div class="l">行动</div><div class="d">白名单工具或提交</div></div>
+        <div class="arr" style="grid-column:1;grid-row:2;font-size:10px;font-family:var(--mono)">未结束↑</div>
+        <div class="arr" style="grid-column:3;grid-row:2">↓</div>
+        <div class="node n4" style="grid-column:1;grid-row:3"><div class="l">提交</div><div class="d">进 Guard</div></div>
+        <div class="arr" style="grid-column:2;grid-row:3">←</div>
+        <div class="node n3" style="grid-column:3;grid-row:3"><div class="l">观察</div><div class="d">证据入库</div></div>
+      </div>
+      <div class="callout warn">
+        <strong>Agent 增益验收：</strong>目标用例须「最终选择≠纯引擎」或「理由引用了工具新证据」。
+        只改文案、选择与基线完全一致 → 记无增益（用于改路由/提示，默认不作为生产硬阻断）。
+      </div>
+      <h3>工具白名单</h3>
+      <p class="hint">查商家/商品详情 · 对比 · 曝光历史 · 补充检索一次 · 提交。不能扫全库、改库存、发券、改画像。</p>
+    </section>
+
+    <section class="panel" id="trust">
+      <h2>可靠：底线与降级</h2>
+      <div class="grid g2">
+        <div class="card"><span class="tag check">第一版必须</span>
+          <ul>
+            <li>封闭候选 + 工具白名单</li>
+            <li>硬约束失败不可输出/绕过</li>
+            <li>证据过期与候选版本</li>
+            <li>submit 幂等；交付再验</li>
+            <li>生成 ≠ 展示</li>
+          </ul></div>
+        <div class="card"><span class="tag fail">降级边界</span>
+          <ul>
+            <li>可用：硬约束通过的基线子集</li>
+            <li>禁止：未校验 Top3 直出</li>
+            <li>禁止：降级绕过拒绝/忌口</li>
+            <li>部分失败：只留通过项</li>
+          </ul></div>
+      </div>
+      <p class="hint" style="margin-top:10px">多样性：引擎粗控，Guard 终裁最终名单同类目商家数（≤2 是否全场景待确认）。</p>
+    </section>
+
+    <section class="panel" id="mvp">
+      <h2>MVP 与验证</h2>
+      <div class="grid g2">
+        <div class="card"><span class="tag decide">第一版做</span>
+          <p>资格+机会 · 快照 · 引擎 · 可编码路由 · DIRECT/REACT · Guard · 交付 · 反馈 · Trace · 三臂离线评测 · 站内页</p></div>
+        <div class="card"><span class="tag fail">不做</span>
+          <p>Push 台 · 发券 · 在线学习 · delay 调度 · 多 Agent · 真实订单库 · 微服务拆分</p></div>
+      </div>
+      <h3 style="margin-top:12px">三臂对照（必须）</h3>
+      <table>
+        <thead><tr><th>臂</th><th>内容</th></tr></thead>
+        <tbody>
+          <tr><td>Engine</td><td>纯引擎基线 + 模板理由</td></tr>
+          <tr><td>DIRECT</td><td>引擎 + 一次模型</td></tr>
+          <tr><td>REACT</td><td>引擎 + ReAct（冲突类用例）</td></tr>
+        </tbody>
+      </table>
+      <p class="hint">看约束遵守、增益定义、模型调用次数。线上成功线待确定。点击率不是唯一标准。</p>
+      <div class="callout">
+        <strong>目录建议（单体）：</strong>
+        <code>policy.py</code>（资格/机会/路由/交付）· <code>engine.py</code> · <code>runtime/</code> · <code>tools.py</code> · <code>eval/</code>
+      </div>
+      <p class="hint">完整评审表与验证阶段见 <code>架构评审-v1.5.md</code> 与技术方案第 11 章。</p>
+    </section>
+
+    <footer>
+      <span>技术方案.md v1.5 · 架构评审-v1.5.md</span>
+      <a href="./技术方案.md">打开技术方案</a>
+    </footer>
+  </div>
+  <script>
+    document.querySelectorAll(".tab").forEach((tab)=>{
+      tab.addEventListener("click",()=>{
+        document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach(p=>p.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById(tab.dataset.tab).classList.add("active");
+      });
+    });
+  </script>
+</body>
+</html>
