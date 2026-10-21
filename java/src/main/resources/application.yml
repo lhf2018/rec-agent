@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+rec-agent:
+  use-mock-llm: true
+  llm-model: mock
+  task-timeout-ms: 20000
+  model-min-remaining-ms: 500
+  enable-react: true
+  enable-llm: true
+  force-route: ""
+  freq-cap-per-day: 10
+  freq-window-hours: 24
+  cooldown-minutes: 0
+  similar-suppress-minutes: 120
+  scene-dedupe-minutes: 60
+  exposure-history-window-hours: 72
+  not-interested-ttl-days: 30
+  dnd-start-hour: 23
+  dnd-end-hour: 7
+  max-merchants: 3
+  max-products-per-merchant: 3
+  max-same-category: 2
+  candidate-limit: 30
+  recall-limit: 20
+  react-max-steps: 4
+  tool-timeout-ms: 2000
+  supplement-timeout-ms: 5000
+  supplement-min: 3
+  db-path: data/rec_agent_java.db

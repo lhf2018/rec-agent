@@ -54,6 +54,7 @@ class RecommendationService:
         started = utc_now()
         deadline_at = started + timedelta(milliseconds=self.settings.task_timeout_ms)
         trace = TraceRecorder(run_id=task_id)
+        trace.set_meta(deadline_at=to_utc_iso(deadline_at))
         scene_key = f"{req.scene.trigger.value}:{req.scene.scene_id}"
 
         snapshot = self.snapshots.build(req.user_id, now=started, scene_key=scene_key)
@@ -174,9 +175,12 @@ class RecommendationService:
                 deadline_at=deadline_at,
                 candidate_set_version=engine_out.candidate_set_version,
                 need_compare=engine_out.need_compare,
+                need_freshness=engine_out.need_freshness,
                 supplement_needed=engine_out.supplement_needed,
                 soft_rerank=engine_out.soft_rerank,
             )
+            if agent_out.get("fallback_reason") == "deadline_exhausted":
+                trace.set_meta(budget_exhausted=True)
             model_calls = agent_out.get("model_calls") or 0
             if agent_out.get("ok") and agent_out.get("merchants"):
                 merchants = agent_out["merchants"]
@@ -310,6 +314,8 @@ class RecommendationService:
             "opportunity_result": trace.opportunity_result,
             "decision_reason_code": trace.decision_reason_code or result.decision_reason_code,
             "fallback_reason": trace.fallback_reason or result.fallback_reason,
+            "deadline_at": trace.deadline_at or result.metrics.get("deadline_at"),
+            "budget_exhausted": trace.budget_exhausted,
             "model_calls": trace.model_calls or result.metrics.get("model_calls", 0),
             "latency_ms": trace.summary()["latency_ms"],
             "guard_results": trace.guard_results,

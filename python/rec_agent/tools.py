@@ -157,4 +157,19 @@ class ToolExecutor:
                     "candidate_set_version": out.candidate_set_version,
                 },
             }
+        if name == "submit_recommendation":
+            merchants = args.get("merchants")
+            if not isinstance(merchants, list):
+                return {"ok": False, "error_code": "invalid_argument", "message": "merchants required"}
+            decision = args.get("decision") or "recommend"
+            return {
+                "ok": True,
+                "evidence_id": "submit_1",
+                "data": {
+                    "decision": decision,
+                    "merchants": merchants,
+                    "self_score": args.get("self_score"),
+                    "accepted": True,
+                },
+            }
         return {"ok": False, "error_code": "invalid_argument", "message": f"unknown tool {name}"}

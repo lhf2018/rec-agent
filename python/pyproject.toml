@@ -3,6 +3,7 @@ name = "rec-agent"
 version = "0.1.0"
 description = "Proactive merchant recommendation agent (MVP)"
 readme = "README.md"
+# Run from this directory: cd python && pip install -e ".[dev]"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi==0.115.6",

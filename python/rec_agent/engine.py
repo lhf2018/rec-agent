@@ -15,7 +15,7 @@ from rec_agent.models import (
     Scene,
     UserSnapshot,
 )
-from rec_agent.timeutil import to_utc_iso, utc_now
+from rec_agent.timeutil import to_utc, to_utc_iso, utc_now
 
 
 def _haversine_m(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
@@ -54,7 +54,8 @@ class RecommendationEngine:
             c.provenance = "primary"
         baseline = candidates[: self.settings.max_merchants]
         intent_conflict = self._intent_conflict(snapshot, candidates)
-        facts_complete = all(c.is_open and c.distance_m >= 0 for c in candidates[:3]) if candidates else False
+        facts_complete = self._facts_complete(candidates)
+        need_freshness = self._need_freshness(candidates)
         need_compare = self._need_compare(snapshot, candidates, intent_conflict)
         soft_rerank = self._soft_rerank(snapshot, candidates, intent_conflict)
         supplement_needed = len(candidates) < self.settings.supplement_min
@@ -64,9 +65,9 @@ class RecommendationEngine:
             baseline=baseline,
             dropped=dropped,
             candidate_set_version=version,
-            facts_complete=facts_complete and bool(candidates),
+            facts_complete=facts_complete,
             intent_conflict=intent_conflict,
-            need_freshness=False,
+            need_freshness=need_freshness,
             need_compare=need_compare,
             soft_rerank=soft_rerank,
             supplement_needed=supplement_needed,
@@ -83,9 +84,37 @@ class RecommendationEngine:
         radius = scene.radius_m
         if strategy == "widen_radius":
             radius = int(scene.radius_m * 1.8)
+        elif strategy == "adjacent_category":
+            radius = int(scene.radius_m * 1.3)
+        elif strategy == "trending":
+            radius = scene.radius_m
+        else:
+            radius = int(scene.radius_m * 1.8)
+
         out = self.run(snapshot, scene, radius_override=radius)
-        # keep only new ids for supplement merge helper; caller merges
         new_cands = [c for c in out.candidates if c.merchant_id not in existing_ids]
+
+        if strategy == "adjacent_category":
+            topics = set(snapshot.long_term_categories) | {
+                i.topic for i in snapshot.short_term
+            } | set(snapshot.preferred_tags)
+            # Prefer categories/tags near user affinity that are not already covered.
+            covered = {c.category for c in out.candidates if c.merchant_id in existing_ids}
+            affinity = [
+                c
+                for c in new_cands
+                if c.category not in covered
+                and (
+                    not topics
+                    or c.category in topics
+                    or any(t in c.tags for t in topics)
+                )
+            ]
+            new_cands = affinity or new_cands
+        elif strategy == "trending":
+            trending = [c for c in new_cands if "trending" in c.recall_sources]
+            new_cands = trending or sorted(new_cands, key=lambda c: -c.score)
+
         for c in new_cands:
             c.provenance = "supplement"
             c.evidence_id = f"supp_{c.merchant_id}"
@@ -277,6 +306,41 @@ class RecommendationEngine:
                 if len(out) >= limit:
                     break
         return out
+
+    def _facts_complete(self, candidates: list[CandidateMerchant]) -> bool:
+        """营业 / 距离 / 价格带 / 库存摘要均有未过期证据（§6）。"""
+        if not candidates:
+            return False
+        now = utc_now()
+        for c in candidates[:3]:
+            if not c.is_open:
+                return False
+            if c.distance_m is None or c.distance_m < 0:
+                return False
+            if c.avg_price is None:
+                return False
+            if not c.products or not any(p.in_stock for p in c.products):
+                return False
+            exp = to_utc(c.expires_at) if c.expires_at else None
+            if exp is None or exp <= now:
+                return False
+        return True
+
+    def _need_freshness(self, candidates: list[CandidateMerchant]) -> bool:
+        """关键证据缺失或将在 freshness 窗内过期 → 需要工具刷新。"""
+        if not candidates:
+            return False
+        now = utc_now()
+        horizon = timedelta(minutes=self.settings.freshness_horizon_minutes)
+        for c in candidates[:3]:
+            if c.avg_price is None or c.distance_m is None:
+                return True
+            exp = to_utc(c.expires_at) if c.expires_at else None
+            if exp is None:
+                return True
+            if exp <= now or exp - now <= horizon:
+                return True
+        return False
 
     def _intent_conflict(self, snapshot: UserSnapshot, candidates: list[CandidateMerchant]) -> bool:
         if not candidates or not snapshot.short_term:

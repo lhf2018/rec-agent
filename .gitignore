@@ -1,6 +1,7 @@
 .env
 .venv/
 venv/
+python/.venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -11,3 +12,7 @@ dist/
 *.egg-info/
 .idea/
 .vscode/
+java/target/
+java/.mvn-tools/
+*.class
+*.iml

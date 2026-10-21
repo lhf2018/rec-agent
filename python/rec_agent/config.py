@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     tool_timeout_ms: int = 2000
     supplement_timeout_ms: int = 5000
     supplement_min: int = 3
+    # Evidence about to expire within this window → need_freshness (0 = only missing/expired)
+    freshness_horizon_minutes: int = 0
     display_confidence_threshold: float | None = None  # unused as sole gate
 
 

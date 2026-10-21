@@ -15,7 +15,7 @@ from rec_agent.models import (
 from rec_agent.runtime.budget import DeadlineBudget
 from rec_agent.runtime.guard import Evidence, Guard
 from rec_agent.runtime.trace import TraceRecorder
-from rec_agent.timeutil import utc_now
+from rec_agent.timeutil import to_utc_iso, utc_now
 from rec_agent.tools import ToolExecutor
 
 
@@ -43,14 +43,15 @@ class AgentLoop:
         candidate_set_version: str = "",
         *,
         need_compare: bool = False,
+        need_freshness: bool = False,
         supplement_needed: bool = False,
         soft_rerank: bool = False,
     ) -> dict[str, Any]:
         self.tools.reset()
         recorder = trace or TraceRecorder()
-        recorder.set_meta(route_mode=mode.value)
         if deadline_at is None:
             deadline_at = utc_now() + timedelta(milliseconds=self.settings.task_timeout_ms)
+        recorder.set_meta(route_mode=mode.value, deadline_at=to_utc_iso(deadline_at))
         budget = DeadlineBudget(deadline_at, self.settings)
         version = candidate_set_version
         allowed = self._allowed_ids(candidates)
@@ -90,10 +91,46 @@ class AgentLoop:
         max_steps = self.settings.react_max_steps
         compared = False
         supplemented = False
+        refreshed = False
         for step in range(1, max_steps + 1):
             if not budget.allow_model():
                 return self._deadline_exhausted(recorder, candidates, evidence)
             recorder.bump_model()
+
+            if need_freshness and not refreshed and candidates:
+                if not budget.allow_tool(self.settings.tool_timeout_ms):
+                    return self._deadline_exhausted(recorder, candidates, evidence)
+                mid = candidates[0].merchant_id
+                obs = self.tools.execute(
+                    "get_merchant_detail",
+                    {"merchant_id": mid},
+                    allowed_ids=allowed,
+                    snapshot=snapshot,
+                    scene=scene,
+                    candidates=candidates,
+                )
+                refreshed = True
+                if obs.get("ok"):
+                    evidence[obs["evidence_id"]] = Evidence(
+                        evidence_id=obs["evidence_id"],
+                        facts=dict(obs.get("data") or {}),
+                        source="tool",
+                        subject_type="merchant",
+                        subject_id=mid,
+                        candidate_set_version=version,
+                        expires_at=candidates[0].expires_at,
+                    )
+                    tool_evidence_ids.append(obs["evidence_id"])
+                recorder.add_step(
+                    step_index=step,
+                    decision_reason_code="need_freshness_refresh",
+                    tool_name="get_merchant_detail",
+                    result_status="ok" if obs.get("ok") else "error",
+                    evidence_ids=[obs.get("evidence_id")] if obs.get("evidence_id") else [],
+                    actions=[{"tool": "get_merchant_detail"}],
+                    observations=[obs],
+                )
+                continue
 
             if need_compare and not compared and snapshot.short_term and len(candidates) >= 2:
                 short = max(snapshot.short_term, key=lambda x: x.confidence).topic
@@ -165,24 +202,35 @@ class AgentLoop:
                 if obs.get("ok"):
                     new_raw = obs["data"]["new_candidates"]
                     new_cands = [CandidateMerchant(**c) for c in new_raw]
-                    version = obs["data"].get("candidate_set_version") or version
-                    candidates = candidates + new_cands
-                    allowed = self._allowed_ids(candidates)
-                    by_id = {c.merchant_id: c for c in candidates}
-                    evidence = {
-                        k: v
-                        for k, v in evidence.items()
-                        if v.subject_type in {"snapshot", "tool"}
-                        or not v.candidate_set_version
-                        or v.candidate_set_version == version
-                    }
-                    evidence.update(
-                        self.guard.build_evidence_index(
-                            new_cands, candidate_set_version=version
+                    if new_cands:
+                        # Version bump invalidates old merchant/product evidence;
+                        # rebuild the full closed set at the new version (§7.3 / §8.2).
+                        version = obs["data"].get("candidate_set_version") or version
+                        candidates = candidates + new_cands
+                        allowed = self._allowed_ids(candidates)
+                        by_id = {c.merchant_id: c for c in candidates}
+                        kept = {
+                            k: v
+                            for k, v in evidence.items()
+                            if v.subject_type in {"snapshot", "tool"}
+                        }
+                        evidence = kept
+                        evidence.update(
+                            self.guard.build_evidence_index(
+                                candidates, candidate_set_version=version
+                            )
                         )
-                    )
-                    if obs.get("evidence_id"):
-                        tool_evidence_ids.append(obs["evidence_id"])
+                        if obs.get("evidence_id"):
+                            eid = obs["evidence_id"]
+                            evidence[eid] = Evidence(
+                                evidence_id=eid,
+                                facts={"supplement": True, "strategy": obs["data"].get("strategy")},
+                                source="tool",
+                                subject_type="tool",
+                                subject_id=eid,
+                                candidate_set_version=version,
+                            )
+                            tool_evidence_ids.append(eid)
                 continue
 
             draft = self._mock_select(
@@ -226,7 +274,7 @@ class AgentLoop:
     def _deadline_exhausted(
         self, recorder: TraceRecorder, candidates, evidence
     ) -> dict[str, Any]:
-        recorder.set_meta(fallback_reason="deadline_exhausted")
+        recorder.set_meta(fallback_reason="deadline_exhausted", budget_exhausted=True)
         recorder.add_step(
             step_index=len(recorder.steps) + 1,
             decision_reason_code="deadline_exhausted",
@@ -306,10 +354,24 @@ class AgentLoop:
                 continue
             p = c.products[0]
             eids = [c.evidence_id or f"cand_{c.merchant_id}"]
-            if prefer_merchant_id and c.merchant_id == prefer_merchant_id and extra:
-                eids.extend(extra)
+            detail_eid = f"detail_{c.merchant_id}"
+            cmp_ids = [eid for eid in extra if eid.startswith("cmp_")]
+            if prefer_merchant_id and c.merchant_id == prefer_merchant_id and cmp_ids:
+                eids.extend(cmp_ids)
                 reason = (
                     f"对比后更贴合近期兴趣，距离约 {int(c.distance_m)} 米，"
+                    f"人均约 {int(c.avg_price)} 元"
+                )
+            elif detail_eid in extra:
+                eids.append(detail_eid)
+                reason = (
+                    f"已刷新营业与距离证据，距离约 {int(c.distance_m)} 米，"
+                    f"人均约 {int(c.avg_price)} 元"
+                )
+            elif "supp_batch" in extra and c.provenance == "supplement":
+                eids.append("supp_batch")
+                reason = (
+                    f"补召回后入选，距离约 {int(c.distance_m)} 米，"
                     f"人均约 {int(c.avg_price)} 元"
                 )
             elif c.merchant_id in snapshot.frequent_merchants:
