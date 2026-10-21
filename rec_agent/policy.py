@@ -72,7 +72,6 @@ class Policy:
         if snapshot.recent_conversions:
             return OpportunityDecision(OpportunityResult.suppress, "recent_conversion_suppress")
 
-        # Scene dedupe is separate from freq_cap / exposure history
         if snapshot.runtime.scene_seen_recently:
             return OpportunityDecision(OpportunityResult.suppress, "duplicate_scene_suppress")
 
@@ -105,7 +104,11 @@ class Policy:
         budget_ok: bool = True,
         enable_llm: bool = True,
         enable_react: bool = True,
+        force_mode: RouteMode | None = None,
     ) -> RouteDecision:
+        if force_mode is not None:
+            return RouteDecision(force_mode, f"force_{force_mode.value.lower()}")
+
         if not engine.candidates:
             return RouteDecision(RouteMode.skip, "no_candidates")
         if not budget_ok:
@@ -113,13 +116,40 @@ class Policy:
         if not enable_llm:
             return RouteDecision(RouteMode.rule_engine, "llm_disabled")
 
+        # High complexity / evidence gaps → REACT (only when tools can help)
         need_react = (
-            engine.intent_conflict or engine.need_freshness or len(engine.candidates) < 2
+            engine.intent_conflict
+            or engine.need_freshness
+            or engine.need_compare
+            or engine.supplement_needed
         )
         if need_react and enable_react:
-            return RouteDecision(RouteMode.react, "react_gap")
+            reason = "react_gap"
+            if engine.supplement_needed and not (
+                engine.intent_conflict or engine.need_compare or engine.need_freshness
+            ):
+                reason = "supplement_needed"
+            elif engine.need_compare:
+                reason = "need_compare"
+            elif engine.intent_conflict:
+                reason = "intent_conflict"
+            return RouteDecision(RouteMode.react, reason)
+
+        # Medium: soft rerank / natural reason, no tool gaps → DIRECT
+        if (
+            engine.facts_complete
+            and engine.soft_rerank
+            and not engine.intent_conflict
+            and not engine.need_freshness
+            and not engine.need_compare
+            and not engine.supplement_needed
+        ):
+            return RouteDecision(RouteMode.direct, "soft_rerank")
+
+        # Low: complete facts, no gaps
         if engine.facts_complete and not engine.intent_conflict and not engine.need_freshness:
             return RouteDecision(RouteMode.rule_engine, "facts_complete_no_conflict")
+
         return RouteDecision(RouteMode.direct, "need_natural_reason")
 
     def check_delivery(
@@ -147,3 +177,26 @@ def template_reason(c) -> str:
         f"与当前场景匹配，距离约 {int(c.distance_m)} 米，"
         f"人均约 {int(c.avg_price)} 元，排序靠前"
     )
+
+
+def rule_rerank(
+    candidates: list,
+    snapshot: UserSnapshot,
+    limit: int = 3,
+) -> list:
+    """Deterministic preference/short-term rerank without LLM (eval baseline)."""
+    short = None
+    if snapshot.short_term:
+        short = max(snapshot.short_term, key=lambda x: x.confidence).topic
+
+    def key(c):
+        score = 0
+        if short and c.category == short:
+            score += 100
+        if any(t in c.tags or c.category == t for t in snapshot.preferred_tags):
+            score += 50
+        if c.merchant_id in snapshot.frequent_merchants:
+            score += 20
+        return (score, c.score)
+
+    return sorted(candidates, key=key, reverse=True)[:limit]

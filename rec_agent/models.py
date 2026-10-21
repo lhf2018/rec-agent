@@ -172,6 +172,9 @@ class EngineOutput(BaseModel):
     facts_complete: bool = True
     intent_conflict: bool = False
     need_freshness: bool = False
+    need_compare: bool = False
+    soft_rerank: bool = False
+    supplement_needed: bool = False
     filter_stats: dict[str, int] = Field(default_factory=dict)
 
 

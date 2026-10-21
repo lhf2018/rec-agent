@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     model_min_remaining_ms: int = 500
     enable_react: bool = True
     enable_llm: bool = True
+    force_route: str = ""  # SKIP|FALLBACK|RULE_ENGINE|DIRECT|REACT for eval
 
     # Policy defaults — marked as assumptions in docs/待确认.md
     freq_cap_per_day: int = 10
@@ -39,6 +40,7 @@ class Settings(BaseSettings):
     react_max_steps: int = 4
     tool_timeout_ms: int = 2000
     supplement_timeout_ms: int = 5000
+    supplement_min: int = 3
     display_confidence_threshold: float | None = None  # unused as sole gate
 
 

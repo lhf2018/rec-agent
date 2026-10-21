@@ -55,6 +55,9 @@ class RecommendationEngine:
         baseline = candidates[: self.settings.max_merchants]
         intent_conflict = self._intent_conflict(snapshot, candidates)
         facts_complete = all(c.is_open and c.distance_m >= 0 for c in candidates[:3]) if candidates else False
+        need_compare = self._need_compare(snapshot, candidates, intent_conflict)
+        soft_rerank = self._soft_rerank(snapshot, candidates, intent_conflict)
+        supplement_needed = len(candidates) < self.settings.supplement_min
         version = f"csv_{scene.scene_id}_{len(candidates)}_{len(dropped)}"
         return EngineOutput(
             candidates=candidates,
@@ -64,6 +67,9 @@ class RecommendationEngine:
             facts_complete=facts_complete and bool(candidates),
             intent_conflict=intent_conflict,
             need_freshness=False,
+            need_compare=need_compare,
+            soft_rerank=soft_rerank,
+            supplement_needed=supplement_needed,
             filter_stats=stats,
         )
 
@@ -279,3 +285,30 @@ class RecommendationEngine:
         if top_intent.confidence < 0.8:
             return False
         return candidates[0].category != top_intent.topic
+
+    def _need_compare(
+        self, snapshot: UserSnapshot, candidates: list[CandidateMerchant], intent_conflict: bool
+    ) -> bool:
+        if not intent_conflict or not snapshot.short_term or len(candidates) < 2:
+            return False
+        topic = max(snapshot.short_term, key=lambda x: x.confidence).topic
+        return any(c.category == topic and c.merchant_id != candidates[0].merchant_id for c in candidates)
+
+    def _soft_rerank(
+        self, snapshot: UserSnapshot, candidates: list[CandidateMerchant], intent_conflict: bool
+    ) -> bool:
+        """Light rerank / natural reason without tool gaps — enables DIRECT."""
+        if intent_conflict or not candidates:
+            return False
+        top = candidates[0]
+        if snapshot.preferred_tags and not any(t in top.tags or top.category == t for t in snapshot.preferred_tags):
+            if any(
+                any(t in c.tags or c.category == t for t in snapshot.preferred_tags) for c in candidates[1:]
+            ):
+                return True
+        if snapshot.lifecycle == "new":
+            return True
+        if snapshot.member_level == "gold" and snapshot.frequent_merchants:
+            # personalized copy / light preference for gold members
+            return True
+        return False

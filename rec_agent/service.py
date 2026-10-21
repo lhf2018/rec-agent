@@ -112,11 +112,15 @@ class RecommendationService:
             return result
 
         budget_ok = self.policy.budget_ok(deadline_at)
+        force_mode = None
+        if self.settings.force_route:
+            force_mode = RouteMode(self.settings.force_route)
         route = self.policy.route(
             engine_out,
             budget_ok=budget_ok,
             enable_llm=self.settings.enable_llm,
             enable_react=self.settings.enable_react,
+            force_mode=force_mode,
         )
         trace.set_meta(route_mode=route.mode.value, decision_reason_code=route.reason_code)
 
@@ -153,6 +157,9 @@ class RecommendationService:
                 trace=trace,
                 deadline_at=deadline_at,
                 candidate_set_version=engine_out.candidate_set_version,
+                need_compare=engine_out.need_compare,
+                supplement_needed=engine_out.supplement_needed,
+                soft_rerank=engine_out.soft_rerank,
             )
             model_calls = agent_out.get("model_calls") or 0
             if agent_out.get("ok") and agent_out.get("merchants"):

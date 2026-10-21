@@ -41,6 +41,10 @@ class AgentLoop:
         trace: TraceRecorder | None = None,
         deadline_at: datetime | None = None,
         candidate_set_version: str = "",
+        *,
+        need_compare: bool = False,
+        supplement_needed: bool = False,
+        soft_rerank: bool = False,
     ) -> dict[str, Any]:
         self.tools.reset()
         recorder = trace or TraceRecorder()
@@ -52,12 +56,19 @@ class AgentLoop:
         allowed = self._allowed_ids(candidates)
         evidence = self.guard.build_evidence_index(candidates, candidate_set_version=version)
         by_id = {c.merchant_id: c for c in candidates}
+        compare_pick: str | None = None
+        tool_evidence_ids: list[str] = []
 
         if mode == RouteMode.direct:
             if not budget.allow_model():
                 return self._deadline_exhausted(recorder, candidates, evidence)
             recorder.bump_model()
-            draft = self._mock_select(snapshot, candidates, prefer_short_term=False)
+            draft = self._mock_select(
+                snapshot,
+                candidates,
+                prefer_short_term=False,
+                prefer_soft_tags=soft_rerank,
+            )
             recorder.add_step(
                 step_index=1,
                 decision_reason_code="direct_submit",
@@ -77,15 +88,18 @@ class AgentLoop:
             return self._pack(gr, recorder, candidates, evidence)
 
         max_steps = self.settings.react_max_steps
+        compared = False
+        supplemented = False
         for step in range(1, max_steps + 1):
             if not budget.allow_model():
                 return self._deadline_exhausted(recorder, candidates, evidence)
             recorder.bump_model()
-            if step == 1 and snapshot.short_term:
+
+            if need_compare and not compared and snapshot.short_term and len(candidates) >= 2:
                 short = max(snapshot.short_term, key=lambda x: x.confidence).topic
-                left = candidates[0].merchant_id if candidates else None
+                left = candidates[0].merchant_id
                 right_cand = next((c for c in candidates if c.category == short), None)
-                if left and right_cand and right_cand.merchant_id != left:
+                if right_cand and right_cand.merchant_id != left:
                     if not budget.allow_tool(self.settings.tool_timeout_ms):
                         return self._deadline_exhausted(recorder, candidates, evidence)
                     obs = self.tools.execute(
@@ -100,6 +114,7 @@ class AgentLoop:
                         scene=scene,
                         candidates=candidates,
                     )
+                    compared = True
                     if obs.get("ok"):
                         evidence[obs["evidence_id"]] = Evidence(
                             evidence_id=obs["evidence_id"],
@@ -109,6 +124,9 @@ class AgentLoop:
                             subject_id=obs["evidence_id"],
                             candidate_set_version=version,
                         )
+                        tool_evidence_ids.append(obs["evidence_id"])
+                        # Observation must drive pick: prefer short-term category side
+                        compare_pick = right_cand.merchant_id
                     recorder.add_step(
                         step_index=step,
                         decision_reason_code="need_compare_short_term_intent",
@@ -117,11 +135,14 @@ class AgentLoop:
                         evidence_ids=[obs.get("evidence_id")] if obs.get("evidence_id") else [],
                         actions=[{"tool": "compare_candidates"}],
                         observations=[obs],
-                        extra={"missing_evidence": ["compare"]},
                     )
                     continue
 
-            if len(candidates) < 1:
+            if (
+                supplement_needed
+                and not supplemented
+                and len(candidates) < self.settings.supplement_min
+            ):
                 if not budget.allow_tool(self.settings.supplement_timeout_ms):
                     return self._deadline_exhausted(recorder, candidates, evidence)
                 obs = self.tools.execute(
@@ -132,6 +153,7 @@ class AgentLoop:
                     scene=scene,
                     candidates=candidates,
                 )
+                supplemented = True
                 recorder.add_step(
                     step_index=step,
                     decision_reason_code="insufficient_candidates",
@@ -147,7 +169,6 @@ class AgentLoop:
                     candidates = candidates + new_cands
                     allowed = self._allowed_ids(candidates)
                     by_id = {c.merchant_id: c for c in candidates}
-                    # drop stale primary evidence that does not match new version
                     evidence = {
                         k: v
                         for k, v in evidence.items()
@@ -160,9 +181,17 @@ class AgentLoop:
                             new_cands, candidate_set_version=version
                         )
                     )
+                    if obs.get("evidence_id"):
+                        tool_evidence_ids.append(obs["evidence_id"])
                 continue
 
-            draft = self._mock_select(snapshot, candidates, prefer_short_term=True)
+            draft = self._mock_select(
+                snapshot,
+                candidates,
+                prefer_short_term=True,
+                prefer_merchant_id=compare_pick,
+                extra_evidence_ids=tool_evidence_ids,
+            )
             recorder.add_step(
                 step_index=step,
                 decision_reason_code="react_submit",
@@ -240,29 +269,62 @@ class AgentLoop:
         snapshot: UserSnapshot,
         candidates: list[CandidateMerchant],
         prefer_short_term: bool,
+        prefer_soft_tags: bool = False,
+        prefer_merchant_id: str | None = None,
+        extra_evidence_ids: list[str] | None = None,
     ) -> list[RecommendedMerchant]:
         ordered = list(candidates)
-        if prefer_short_term and snapshot.short_term:
+        if prefer_merchant_id:
+            ordered = sorted(
+                candidates,
+                key=lambda c: (0 if c.merchant_id == prefer_merchant_id else 1, -c.score),
+            )
+        elif prefer_short_term and snapshot.short_term:
             topic = max(snapshot.short_term, key=lambda x: x.confidence).topic
             ordered = sorted(
                 candidates,
                 key=lambda c: (0 if c.category == topic else 1, -c.score),
             )
+        elif prefer_soft_tags and snapshot.preferred_tags:
+            ordered = sorted(
+                candidates,
+                key=lambda c: (
+                    0
+                    if any(t in c.tags or c.category == t for t in snapshot.preferred_tags)
+                    else 1,
+                    -c.score,
+                ),
+            )
+        extra = list(extra_evidence_ids or [])
         out: list[RecommendedMerchant] = []
         for c in ordered[:3]:
             if not c.products:
                 continue
             p = c.products[0]
+            eids = [c.evidence_id or f"cand_{c.merchant_id}"]
+            if prefer_merchant_id and c.merchant_id == prefer_merchant_id and extra:
+                eids.extend(extra)
+                reason = (
+                    f"对比后更贴合近期兴趣，距离约 {int(c.distance_m)} 米，"
+                    f"人均约 {int(c.avg_price)} 元"
+                )
+            elif c.merchant_id in snapshot.frequent_merchants:
+                eids.append("snap_history")
+                reason = (
+                    f"近 30 天偏好相关，当前营业，距离约 {int(c.distance_m)} 米在配送范围内"
+                )
+            else:
+                eids.append("snap_history")
+                reason = (
+                    f"与当前场景匹配，距离约 {int(c.distance_m)} 米，"
+                    f"人均约 {int(c.avg_price)} 元"
+                )
             out.append(
                 RecommendedMerchant(
                     merchant_id=c.merchant_id,
                     name=c.name,
-                    reason=(
-                        f"近 30 天偏好相关，当前营业，距离约 {int(c.distance_m)} 米在配送范围内"
-                        if c.merchant_id in snapshot.frequent_merchants
-                        else f"与当前场景匹配，距离约 {int(c.distance_m)} 米，人均约 {int(c.avg_price)} 元"
-                    ),
-                    evidence_ids=[c.evidence_id or f"cand_{c.merchant_id}", "snap_history"],
+                    reason=reason,
+                    evidence_ids=eids,
                     products=[
                         RecommendedProduct(
                             product_id=p.product_id,
