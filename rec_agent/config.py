@@ -4,13 +4,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="REC_AGENT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="REC_AGENT_",
+        env_file=".env",
+        extra="ignore",
+        protected_namespaces=("settings_",),
+    )
 
     use_mock_llm: bool = True
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_model: str = "mock"
     task_timeout_ms: int = 20_000
+    model_min_remaining_ms: int = 500
     enable_react: bool = True
     enable_llm: bool = True
 

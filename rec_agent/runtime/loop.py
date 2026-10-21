@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from rec_agent.config import Settings, get_settings
@@ -11,8 +12,10 @@ from rec_agent.models import (
     Scene,
     UserSnapshot,
 )
+from rec_agent.runtime.budget import DeadlineBudget
 from rec_agent.runtime.guard import Evidence, Guard
 from rec_agent.runtime.trace import TraceRecorder
+from rec_agent.timeutil import utc_now
 from rec_agent.tools import ToolExecutor
 
 
@@ -36,15 +39,21 @@ class AgentLoop:
         scene: Scene,
         candidates: list[CandidateMerchant],
         trace: TraceRecorder | None = None,
+        deadline_at: datetime | None = None,
     ) -> dict[str, Any]:
         self.tools.reset()
         recorder = trace or TraceRecorder()
         recorder.set_meta(route_mode=mode.value)
+        if deadline_at is None:
+            deadline_at = utc_now() + timedelta(milliseconds=self.settings.task_timeout_ms)
+        budget = DeadlineBudget(deadline_at, self.settings)
         allowed = self._allowed_ids(candidates)
         evidence = self.guard.build_evidence_index(candidates)
         by_id = {c.merchant_id: c for c in candidates}
 
         if mode == RouteMode.direct:
+            if not budget.allow_model():
+                return self._deadline_exhausted(recorder, candidates, evidence)
             recorder.bump_model()
             draft = self._mock_select(snapshot, candidates, prefer_short_term=False)
             recorder.add_step(
@@ -60,12 +69,16 @@ class AgentLoop:
 
         max_steps = self.settings.react_max_steps
         for step in range(1, max_steps + 1):
+            if not budget.allow_model():
+                return self._deadline_exhausted(recorder, candidates, evidence)
             recorder.bump_model()
             if step == 1 and snapshot.short_term:
                 short = max(snapshot.short_term, key=lambda x: x.confidence).topic
                 left = candidates[0].merchant_id if candidates else None
                 right_cand = next((c for c in candidates if c.category == short), None)
                 if left and right_cand and right_cand.merchant_id != left:
+                    if not budget.allow_tool(self.settings.tool_timeout_ms):
+                        return self._deadline_exhausted(recorder, candidates, evidence)
                     obs = self.tools.execute(
                         "compare_candidates",
                         {
@@ -97,6 +110,8 @@ class AgentLoop:
                     continue
 
             if len(candidates) < 1:
+                if not budget.allow_tool(self.settings.supplement_timeout_ms):
+                    return self._deadline_exhausted(recorder, candidates, evidence)
                 obs = self.tools.execute(
                     "supplement_recall",
                     {"strategy": "widen_radius"},
@@ -144,6 +159,27 @@ class AgentLoop:
             "candidates": candidates,
             "evidence_index": evidence,
             "fallback_reason": "max_steps",
+            "trace": recorder.summary(),
+        }
+
+    def _deadline_exhausted(
+        self, recorder: TraceRecorder, candidates, evidence
+    ) -> dict[str, Any]:
+        recorder.set_meta(fallback_reason="deadline_exhausted")
+        recorder.add_step(
+            step_index=len(recorder.steps) + 1,
+            decision_reason_code="deadline_exhausted",
+            result_status="budget_exhausted",
+        )
+        return {
+            "ok": False,
+            "merchants": [],
+            "errors": ["deadline_exhausted"],
+            "steps": recorder.steps,
+            "model_calls": recorder.model_calls,
+            "candidates": candidates,
+            "evidence_index": evidence,
+            "fallback_reason": "deadline_exhausted",
             "trace": recorder.summary(),
         }
 

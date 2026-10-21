@@ -137,17 +137,9 @@ class Policy:
         return DeliveryResult(True, None)
 
     def budget_ok(self, deadline_at: datetime, now: datetime | None = None) -> bool:
-        clock = now or utc_now()
-        deadline = to_utc(deadline_at) or deadline_at
-        if deadline.tzinfo is None:
-            from datetime import timezone
+        from rec_agent.runtime.budget import DeadlineBudget
 
-            deadline = deadline.replace(tzinfo=timezone.utc)
-        if clock.tzinfo is None:
-            from datetime import timezone
-
-            clock = clock.replace(tzinfo=timezone.utc)
-        return (deadline - clock).total_seconds() > 2.0
+        return DeadlineBudget(deadline_at, self.settings).allow_model(now)
 
 
 def template_reason(c) -> str:

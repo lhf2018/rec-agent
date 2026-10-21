@@ -146,7 +146,12 @@ class RecommendationService:
             )
         elif route.mode in (RouteMode.direct, RouteMode.react):
             agent_out = self.loop.run(
-                route.mode, snapshot, req.scene, engine_out.candidates, trace=trace
+                route.mode,
+                snapshot,
+                req.scene,
+                engine_out.candidates,
+                trace=trace,
+                deadline_at=deadline_at,
             )
             model_calls = agent_out.get("model_calls") or 0
             if agent_out.get("ok") and agent_out.get("merchants"):
