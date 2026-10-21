@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -9,14 +10,9 @@ sys.path.insert(0, str(ROOT))
 
 from rec_agent.catalog import Catalog
 from rec_agent.config import Settings
-from rec_agent.engine import RecommendationEngine
 from rec_agent.models import CreateTaskRequest, Location, Scene, TriggerType
-from rec_agent.policy import template_reason
-from rec_agent.runtime.guard import Guard
-from rec_agent.runtime.loop import AgentLoop
 from rec_agent.service import RecommendationService
 from rec_agent.store import Store
-from rec_agent.tools import ToolExecutor
 
 
 def _scene(scene_id: str) -> Scene:
@@ -30,163 +26,156 @@ def _scene(scene_id: str) -> Scene:
     )
 
 
-def run_engine_arm(catalog: Catalog, user_id: str, scene_id: str) -> dict:
-    snap = catalog.get_user(user_id)
-    if not snap:
-        return {"status": "failed", "merchants": []}
-    if not snap.allow_personalized:
-        return {"status": "skipped", "merchants": [], "reason": "not_authorized"}
-    eng = RecommendationEngine(catalog)
-    out = eng.run(snap, _scene(scene_id))
-    guard = Guard()
-    merchants = []
-    for c in out.baseline:
-        if not c.products:
-            continue
-        p = c.products[0]
-        merchants.append(
-            {
-                "merchant_id": c.merchant_id,
-                "category": c.category,
-                "reason": template_reason(c),
-                "products": [{"product_id": p.product_id}],
-            }
-        )
-    return {
-        "status": "succeeded" if merchants else "empty",
-        "merchants": merchants,
-        "model_calls": 0,
-        "arm": "engine",
-        "intent_conflict": out.intent_conflict,
-    }
+def _settings_for_arm(arm: str) -> Settings:
+    base = dict(cooldown_minutes=0, scene_dedupe_minutes=0, enable_react=True)
+    if arm == "engine":
+        return Settings(force_route="RULE_ENGINE", enable_llm=False, **base)
+    if arm == "rule_rerank":
+        return Settings(force_route="RULE_RERANK", enable_llm=False, **base)
+    if arm == "direct":
+        return Settings(force_route="DIRECT", enable_llm=True, **base)
+    if arm == "react":
+        return Settings(force_route="REACT", enable_llm=True, **base)
+    raise ValueError(f"unknown arm {arm}")
 
 
-def run_agent_arm(catalog: Catalog, user_id: str, scene_id: str, mode: str) -> dict:
-    settings = Settings(enable_llm=True, enable_react=True)
-    # isolate store
-    import tempfile
-
-    tmp = Path(tempfile.mkdtemp()) / "eval.db"
+def run_arm(user_id: str, scene_id: str, arm: str) -> dict:
+    """Unified evaluation path: always RecommendationService + force_route."""
+    tmp = Path(tempfile.mkdtemp()) / f"eval_{arm}.db"
+    settings = _settings_for_arm(arm)
     svc = RecommendationService(catalog=Catalog(), store=Store(tmp), settings=settings)
-    # For direct/react we still go through service routing; to force arm we call loop manually when needed
-    if mode == "direct":
-        settings2 = Settings(enable_llm=True, enable_react=False)
-        svc = RecommendationService(catalog=Catalog(), store=Store(tmp), settings=settings2)
-        # with react disabled and facts complete -> rule_engine often; force via loop
-        cat = Catalog()
-        snap = cat.get_user(user_id)
-        eng = RecommendationEngine(cat)
-        out = eng.run(snap, _scene(scene_id))
-        loop = AgentLoop(ToolExecutor(cat, eng), Guard(), settings2)
-        from rec_agent.models import RouteMode
-
-        ao = loop.run(RouteMode.direct, snap, _scene(scene_id), out.candidates)
-        merchants = [
-            {
-                "merchant_id": m.merchant_id,
-                "category": next((c.category for c in out.candidates if c.merchant_id == m.merchant_id), ""),
-                "reason": m.reason,
-                "products": [{"product_id": p.product_id} for p in m.products],
-            }
-            for m in ao.get("merchants", [])
-        ]
-        return {
-            "status": "succeeded" if merchants else "empty",
-            "merchants": merchants,
-            "model_calls": ao.get("model_calls", 0),
-            "arm": "direct",
-        }
-
-    if mode == "react":
-        cat = Catalog()
-        snap = cat.get_user(user_id)
-        eng = RecommendationEngine(cat)
-        out = eng.run(snap, _scene(scene_id))
-        loop = AgentLoop(ToolExecutor(cat, eng), Guard())
-        from rec_agent.models import RouteMode
-
-        ao = loop.run(RouteMode.react, snap, _scene(scene_id), out.candidates)
-        merchants = [
-            {
-                "merchant_id": m.merchant_id,
-                "category": next((c.category for c in out.candidates if c.merchant_id == m.merchant_id), ""),
-                "reason": m.reason,
-                "products": [{"product_id": p.product_id} for p in m.products],
-            }
-            for m in ao.get("merchants", [])
-        ]
-        return {
-            "status": "succeeded" if merchants else "empty",
-            "merchants": merchants,
-            "model_calls": ao.get("model_calls", 0),
-            "arm": "react",
-            "engine_top": out.candidates[0].merchant_id if out.candidates else None,
-        }
-
-    # default service path
     res = svc.create_task(
         CreateTaskRequest(tenant_id="t_demo", user_id=user_id, scene=_scene(scene_id))
     )
+    merchants = []
+    # attach category from catalog for assertions
+    cat = Catalog()
+    for m in res.merchants:
+        mc = cat.get_merchant(m.merchant_id)
+        merchants.append(
+            {
+                "merchant_id": m.merchant_id,
+                "category": mc.category if mc else "",
+                "reason": m.reason,
+                "evidence_ids": list(m.evidence_ids),
+                "products": [{"product_id": p.product_id} for p in m.products],
+            }
+        )
     return {
         "status": res.status.value,
-        "merchants": [m.model_dump() for m in res.merchants],
+        "merchants": merchants,
         "model_calls": res.metrics.get("model_calls", 0),
-        "arm": "service",
+        "arm": arm,
+        "source": res.source,
+        "route_mode": res.route_mode.value if res.route_mode else None,
+        "engine_baseline_ids": None,  # filled by caller when comparing
     }
 
 
-def check_case(case: dict, result: dict) -> dict:
+def _ids(merchants: list[dict]) -> list[str]:
+    return [m["merchant_id"] for m in merchants]
+
+
+def check_case(case: dict, result: dict, baselines: dict) -> dict:
     ok = True
-    notes = []
+    notes: list[str] = []
     status = result.get("status")
     if "expect_status" in case and status not in case["expect_status"]:
         ok = False
         notes.append(f"status={status}")
-    mids = {m["merchant_id"] for m in result.get("merchants", [])}
+
+    mids = set(_ids(result.get("merchants", [])))
     cats = {m.get("category") for m in result.get("merchants", [])}
+
     for mid in case.get("must_exclude_merchants", []):
         if mid in mids:
             ok = False
             notes.append(f"excluded_present:{mid}")
+
     for cat in case.get("must_include_category", []):
         if result.get("merchants") and cat not in cats:
-            # soft for engine arm on conflict — still record
-            if case.get("agent_gain_expected") and result.get("arm") == "engine":
-                notes.append(f"engine_may_miss_category:{cat}")
+            if case.get("agent_gain_expected") and result.get("arm") in {"engine", "rule_rerank"}:
+                notes.append(f"baseline_may_miss_category:{cat}")
             else:
                 ok = False
                 notes.append(f"missing_category:{cat}")
-    gain = None
-    if case.get("agent_gain_expected") and result.get("arm") == "react":
-        engine_top = result.get("engine_top")
-        gain = bool(mids) and (engine_top not in mids or any(c == "面食" for c in cats))
-        if not gain:
-            notes.append("no_agent_gain")
+
+    engine_ids = set(baselines.get("engine") or [])
+    rerank_ids = set(baselines.get("rule_rerank") or [])
+    selection_change = None
+    quality_gain = None
+    beats_rule_rerank = None
+
+    if result.get("arm") in {"direct", "react"} and case.get("agent_gain_expected"):
+        # selection_change: ≠ engine baseline set
+        selection_change = bool(mids) and mids != engine_ids
+        beats_rule_rerank = bool(mids) and bool(rerank_ids) and mids != rerank_ids
+        # quality_gain: cites tool-written evidence ids
+        quality_gain = False
+        for m in result.get("merchants", []):
+            for eid in m.get("evidence_ids") or []:
+                if eid.startswith(("cmp_", "supp_", "detail_")):
+                    quality_gain = True
+                    break
+        if case.get("expect_selection_change") and not selection_change:
             ok = False
-    return {"ok": ok, "notes": notes, "gain": gain}
+            notes.append("no_selection_change")
+        if case.get("expect_quality_gain") and not quality_gain:
+            ok = False
+            notes.append("no_quality_gain")
+        if case.get("expect_beats_rule_rerank") and not beats_rule_rerank:
+            ok = False
+            notes.append("no_beats_rule_rerank")
+        if not case.get("expect_selection_change") and not case.get("expect_quality_gain"):
+            if not (selection_change or quality_gain):
+                ok = False
+                notes.append("no_agent_gain")
+
+    return {
+        "ok": ok,
+        "notes": notes,
+        "selection_change": selection_change,
+        "quality_gain": quality_gain,
+        "beats_rule_rerank": beats_rule_rerank,
+    }
 
 
 def main() -> None:
     cases = json.loads((Path(__file__).parent / "cases.json").read_text(encoding="utf-8"))
-    catalog = Catalog()
     rows = []
     for case in cases:
-        for arm in case.get("force_arms", ["engine"]):
+        arms = case.get("force_arms", ["engine"])
+        # always compute engine (+ rule_rerank if needed) baselines for gain checks
+        baselines: dict[str, list[str]] = {}
+        need_baselines = any(a in {"direct", "react"} for a in arms) and case.get(
+            "agent_gain_expected"
+        )
+        if need_baselines or "engine" in arms:
+            eng = run_arm(case["user_id"], case["scene_id"] + "_base_engine", "engine")
+            baselines["engine"] = _ids(eng.get("merchants", []))
+        if need_baselines or "rule_rerank" in arms:
+            rr = run_arm(case["user_id"], case["scene_id"] + "_base_rerank", "rule_rerank")
+            baselines["rule_rerank"] = _ids(rr.get("merchants", []))
+
+        for arm in arms:
+            result = run_arm(case["user_id"], case["scene_id"] + "_" + arm, arm)
             if arm == "engine":
-                result = run_engine_arm(catalog, case["user_id"], case["scene_id"] + "_" + arm)
-            else:
-                result = run_agent_arm(catalog, case["user_id"], case["scene_id"] + "_" + arm, arm)
-            verdict = check_case(case, result)
+                baselines["engine"] = _ids(result.get("merchants", []))
+            if arm == "rule_rerank":
+                baselines["rule_rerank"] = _ids(result.get("merchants", []))
+            verdict = check_case(case, result, baselines)
             rows.append(
                 {
                     "case": case["id"],
                     "arm": arm,
                     "status": result.get("status"),
-                    "merchants": [m["merchant_id"] for m in result.get("merchants", [])],
+                    "merchants": _ids(result.get("merchants", [])),
                     "model_calls": result.get("model_calls", 0),
                     "pass": verdict["ok"],
                     "notes": verdict["notes"],
-                    "gain": verdict["gain"],
+                    "selection_change": verdict["selection_change"],
+                    "quality_gain": verdict["quality_gain"],
+                    "beats_rule_rerank": verdict["beats_rule_rerank"],
                 }
             )
 

@@ -274,9 +274,13 @@ class AgentLoop:
         extra_evidence_ids: list[str] | None = None,
     ) -> list[RecommendedMerchant]:
         ordered = list(candidates)
-        if prefer_merchant_id:
+        if prefer_merchant_id and snapshot.short_term:
+            # Tool compare decided a side: prefer that merchant's short-term category slate
+            topic = max(snapshot.short_term, key=lambda x: x.confidence).topic
+            preferred = [c for c in candidates if c.category == topic]
+            pool = preferred if preferred else list(candidates)
             ordered = sorted(
-                candidates,
+                pool,
                 key=lambda c: (0 if c.merchant_id == prefer_merchant_id else 1, -c.score),
             )
         elif prefer_short_term and snapshot.short_term:

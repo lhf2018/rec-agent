@@ -5,28 +5,28 @@
     "scene_id": "eval_noodle",
     "must_include_category": ["面食"],
     "must_exclude_merchants": ["m_closed_1", "m_offline_1"],
-    "force_arms": ["engine", "direct", "react"]
+    "force_arms": ["engine", "rule_rerank", "direct", "react"]
   },
   {
     "id": "dietary",
     "user_id": "u_dietary",
     "scene_id": "eval_dietary",
     "must_exclude_merchants": ["m_spicy_1", "m_blocked_demo", "m_closed_1"],
-    "force_arms": ["engine", "direct"]
+    "force_arms": ["engine", "rule_rerank", "direct"]
   },
   {
     "id": "budget",
     "user_id": "u_budget",
     "scene_id": "eval_budget",
     "must_exclude_merchants": ["m_expensive_1"],
-    "force_arms": ["engine"]
+    "force_arms": ["engine", "rule_rerank"]
   },
   {
     "id": "newcomer",
     "user_id": "u_newcomer",
     "scene_id": "eval_new",
     "must_exclude_merchants": ["m_closed_1", "m_offline_1"],
-    "force_arms": ["engine"]
+    "force_arms": ["engine", "rule_rerank"]
   },
   {
     "id": "conflict",
@@ -34,7 +34,9 @@
     "scene_id": "eval_conflict",
     "must_include_category": ["面食"],
     "agent_gain_expected": true,
-    "force_arms": ["engine", "react"]
+    "expect_selection_change": true,
+    "expect_quality_gain": true,
+    "force_arms": ["engine", "rule_rerank", "react"]
   },
   {
     "id": "opt_out",

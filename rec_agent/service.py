@@ -15,7 +15,7 @@ from rec_agent.models import (
     RouteMode,
     TaskStatus,
 )
-from rec_agent.policy import Policy, template_reason
+from rec_agent.policy import Policy, rule_rerank, template_reason
 from rec_agent.runtime.guard import Guard
 from rec_agent.runtime.loop import AgentLoop
 from rec_agent.runtime.trace import TraceRecorder
@@ -113,7 +113,8 @@ class RecommendationService:
 
         budget_ok = self.policy.budget_ok(deadline_at)
         force_mode = None
-        if self.settings.force_route:
+        use_rule_rerank = self.settings.force_route == "RULE_RERANK"
+        if self.settings.force_route and not use_rule_rerank:
             force_mode = RouteMode(self.settings.force_route)
         route = self.policy.route(
             engine_out,
@@ -122,6 +123,8 @@ class RecommendationService:
             enable_react=self.settings.enable_react,
             force_mode=force_mode,
         )
+        if use_rule_rerank:
+            route = type(route)(mode=RouteMode.rule_engine, reason_code="force_rule_rerank")
         trace.set_meta(route_mode=route.mode.value, decision_reason_code=route.reason_code)
 
         merchants: list[RecommendedMerchant] = []
@@ -138,6 +141,19 @@ class RecommendationService:
             source = "ranker_fallback"
             fallback_reason = route.reason_code
             trace.set_meta(fallback_reason=fallback_reason)
+        elif use_rule_rerank:
+            ranked = rule_rerank(
+                engine_out.candidates, snapshot, limit=self.settings.max_merchants
+            )
+            merchants = self._rule_engine_result(ranked)
+            source = "rule_rerank"
+            trace.add_step(
+                step_index=1,
+                decision_reason_code="rule_rerank",
+                tool_name=None,
+                result_status="ok",
+                evidence_ids=[m.evidence_ids[0] for m in merchants if m.evidence_ids],
+            )
         elif route.mode == RouteMode.rule_engine:
             merchants = self._rule_engine_result(engine_out.baseline)
             source = "rule_engine"
