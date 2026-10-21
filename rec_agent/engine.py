@@ -2,7 +2,7 @@
 
 import math
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from rec_agent.catalog import Catalog
 from rec_agent.config import Settings, get_settings
@@ -15,6 +15,7 @@ from rec_agent.models import (
     Scene,
     UserSnapshot,
 )
+from rec_agent.timeutil import to_utc_iso, utc_now
 
 
 def _haversine_m(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
@@ -27,11 +28,11 @@ def _haversine_m(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone(timedelta(hours=8))).isoformat()
+    return to_utc_iso(utc_now())
 
 
 def _expires_iso(hours: int = 2) -> str:
-    return (datetime.now(timezone(timedelta(hours=8))) + timedelta(hours=hours)).isoformat()
+    return to_utc_iso(utc_now() + timedelta(hours=hours))
 
 
 class RecommendationEngine:

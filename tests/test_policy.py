@@ -1,6 +1,7 @@
 ﻿from rec_agent.catalog import Catalog
+from rec_agent.config import Settings
 from rec_agent.engine import RecommendationEngine
-from rec_agent.models import Location, Scene, TriggerType
+from rec_agent.models import Location, RuntimeSignals, Scene, TriggerType
 from rec_agent.policy import Policy
 
 
@@ -27,6 +28,7 @@ def test_eligibility_dnd():
     cat = Catalog()
     policy = Policy()
     snap = cat.get_user("u_noodle_regular")
+    # 23:30 +08:00 → local hour 23 in DND
     r = policy.check_eligibility(snap, _scene("2026-10-20T23:30:00+08:00"))
     assert not r.ok
     assert r.reason_code == "dnd_window"
@@ -37,9 +39,10 @@ def test_opportunity_suppress_duplicate_scene():
     policy = Policy()
     snap = cat.get_user("u_noodle_regular")
     assert snap is not None
-    snap.recent_impressions.append("s_dup")
+    snap.runtime = RuntimeSignals(scene_seen_recently=True)
     r = policy.check_opportunity(snap, _scene(scene_id="s_dup"))
     assert r.result.value == "suppress"
+    assert r.reason_code == "duplicate_scene_suppress"
 
 
 def test_route_conflict_to_react():
@@ -48,26 +51,34 @@ def test_route_conflict_to_react():
     policy = Policy()
     snap = cat.get_user("u_conflict")
     out = eng.run(snap, _scene("s_conflict"))
-    # force conflict flag if engine detected
     decision = policy.route(out, enable_llm=True, enable_react=True)
     if out.intent_conflict:
         assert decision.mode.value == "REACT"
     else:
-        # still valid path
         assert decision.mode.value in {"REACT", "RULE_ENGINE", "DIRECT"}
 
 
 def test_eligibility_cooldown():
-    from rec_agent.config import Settings
-
     cat = Catalog()
     policy = Policy(Settings(cooldown_minutes=30))
     snap = cat.get_user("u_noodle_regular")
     assert snap is not None
-    snap.last_success_at = "2026-10-20T12:00:00+08:00"
+    # scene 12:10+08 == 04:10Z; last success 15 minutes earlier → still in 30m cooldown
+    snap.runtime = RuntimeSignals(last_success_at="2026-10-20T03:55:00Z")
     r = policy.check_eligibility(snap, _scene("2026-10-20T12:10:00+08:00"))
     assert not r.ok
     assert r.reason_code == "cooldown"
+
+
+def test_eligibility_freq_cap_from_runtime():
+    cat = Catalog()
+    policy = Policy(Settings(freq_cap_per_day=2))
+    snap = cat.get_user("u_noodle_regular")
+    assert snap is not None
+    snap.runtime = RuntimeSignals(delivery_count_in_window=2)
+    r = policy.check_eligibility(snap, _scene())
+    assert not r.ok
+    assert r.reason_code == "freq_cap"
 
 
 def test_route_fallback_when_budget_exhausted():

@@ -16,9 +16,11 @@ class Settings(BaseSettings):
 
     # Policy defaults — marked as assumptions in docs/待确认.md
     freq_cap_per_day: int = 10
-    # Local MVP defaults lean on idempotency + scene suppress; product may raise these.
+    freq_window_hours: int = 24
     cooldown_minutes: int = 0
     similar_suppress_minutes: int = 120
+    scene_dedupe_minutes: int = 60
+    exposure_history_window_hours: int = 72
     not_interested_ttl_days: int = 30
     dnd_start_hour: int = 23
     dnd_end_hour: int = 7

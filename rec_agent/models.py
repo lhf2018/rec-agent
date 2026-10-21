@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TriggerType(str, Enum):
@@ -96,7 +96,21 @@ class HardConstraints(BaseModel):
     budget_max: float | None = None
 
 
+class RuntimeSignals(BaseModel):
+    """Store-backed dynamic signals injected at snapshot build time."""
+
+    delivery_count_in_window: int = 0
+    last_success_at: str = ""
+    recent_shown_merchants: list[str] = Field(default_factory=list)
+    recent_shown_categories: list[str] = Field(default_factory=list)
+    scene_seen_recently: bool = False
+    exposure_merchant_ids: list[str] = Field(default_factory=list)
+    dynamic_not_interested: list[str] = Field(default_factory=list)
+
+
 class UserSnapshot(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     user_id: str
     tenant_id: str = "t_demo"
     snapshot_version: str = "v1"
@@ -114,11 +128,9 @@ class UserSnapshot(BaseModel):
     preferred_tags: list[str] = Field(default_factory=list)
     allow_personalized: bool = True
     category_opt_out: list[str] = Field(default_factory=list)
-    recent_impressions: list[str] = Field(default_factory=list)
+    # Seed-only conversion markers (static). Runtime delivery/scene live in runtime.
     recent_conversions: list[str] = Field(default_factory=list)
-    last_success_at: str = ""
-    recent_shown_merchants: list[str] = Field(default_factory=list)
-    recent_shown_categories: list[str] = Field(default_factory=list)
+    runtime: RuntimeSignals = Field(default_factory=RuntimeSignals)
 
 
 class CandidateProduct(BaseModel):

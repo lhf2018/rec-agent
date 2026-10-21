@@ -1,17 +1,29 @@
 ﻿from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from rec_agent.catalog import Catalog
+from rec_agent.config import Settings, get_settings
 from rec_agent.engine import RecommendationEngine
 from rec_agent.models import CandidateMerchant, Scene, UserSnapshot
 from rec_agent.runtime.registry import ToolRegistry
+from rec_agent.store import Store
+from rec_agent.timeutil import utc_now
 
 
 class ToolExecutor:
-    def __init__(self, catalog: Catalog, engine: RecommendationEngine) -> None:
+    def __init__(
+        self,
+        catalog: Catalog,
+        engine: RecommendationEngine,
+        store: Store | None = None,
+        settings: Settings | None = None,
+    ) -> None:
         self.catalog = catalog
         self.engine = engine
+        self.store = store
+        self.settings = settings or get_settings()
         self.registry = ToolRegistry()
         self.supplement_used = False
 
@@ -62,7 +74,10 @@ class ToolExecutor:
                     if p.product_id == pid:
                         if c.merchant_id not in allowed_ids:
                             return {"ok": False, "error_code": "not_in_allowed_set", "message": "not allowed"}
-                        raw = next((x for x in self.catalog.get_merchant(c.merchant_id).products if x.product_id == pid), None)
+                        raw = next(
+                            (x for x in self.catalog.get_merchant(c.merchant_id).products if x.product_id == pid),
+                            None,
+                        )
                         return {
                             "ok": True,
                             "evidence_id": f"prod_{pid}",
@@ -101,12 +116,27 @@ class ToolExecutor:
             return {"ok": True, "evidence_id": f"cmp_{left}_{right}", "data": data}
         if name == "get_exposure_history":
             limit = int(args.get("limit") or 10)
-            items = [
-                {"merchant_id": mid, "event_type": "impression"}
-                for mid in snapshot.recent_impressions[:limit]
-            ]
-            for mid in snapshot.hard.not_interested_merchants[:limit]:
-                items.append({"merchant_id": mid, "event_type": "not_interested"})
+            items: list[dict[str, Any]] = []
+            if self.store is not None:
+                since = utc_now() - timedelta(hours=self.settings.exposure_history_window_hours)
+                for it in self.store.list_exposure_merchants(
+                    snapshot.user_id, since=since, limit=limit
+                ):
+                    items.append(
+                        {
+                            "merchant_id": it.merchant_id,
+                            "event_type": it.event_type,
+                            "event_time": it.event_time,
+                        }
+                    )
+            else:
+                # fallback to snapshot runtime merchant ids (already windowed at build)
+                for mid in snapshot.runtime.exposure_merchant_ids[:limit]:
+                    items.append({"merchant_id": mid, "event_type": "impression"})
+                for mid in snapshot.hard.not_interested_merchants[:limit]:
+                    items.append({"merchant_id": mid, "event_type": "not_interested"})
+            # must return real merchant ids only
+            items = [x for x in items if x.get("merchant_id")]
             return {"ok": True, "evidence_id": "expo_1", "data": {"items": items}}
         if name == "supplement_recall":
             if self.supplement_used:

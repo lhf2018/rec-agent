@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from rec_agent.config import Settings, get_settings
 from rec_agent.models import (
@@ -11,6 +11,7 @@ from rec_agent.models import (
     Scene,
     UserSnapshot,
 )
+from rec_agent.timeutil import parse_hour_in_zone, to_utc, utc_now
 
 
 @dataclass
@@ -37,32 +38,6 @@ class DeliveryResult:
     reason_code: str | None = None
 
 
-def _parse_dt(value: str) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-def _parse_hour(occurred_at: str) -> int:
-    try:
-        dt = datetime.fromisoformat(occurred_at)
-        return dt.hour
-    except ValueError:
-        return 12
-
-
-def _scene_time(occurred_at: str) -> datetime:
-    dt = _parse_dt(occurred_at)
-    if dt is None:
-        return datetime.now(timezone.utc)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
-
-
 class Policy:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -73,7 +48,7 @@ class Policy:
         if "*" in snapshot.category_opt_out or "active_recommend" in snapshot.category_opt_out:
             return EligibilityResult(False, "category_opt_out")
 
-        hour = _parse_hour(scene.occurred_at)
+        hour = parse_hour_in_zone(scene.occurred_at)
         start, end = self.settings.dnd_start_hour, self.settings.dnd_end_hour
         in_dnd = hour >= start or hour < end if start > end else start <= hour < end
         if in_dnd:
@@ -82,14 +57,12 @@ class Policy:
         if scene.location is None:
             return EligibilityResult(False, "invalid_scene")
 
-        if len(snapshot.recent_impressions) >= self.settings.freq_cap_per_day:
+        if snapshot.runtime.delivery_count_in_window >= self.settings.freq_cap_per_day:
             return EligibilityResult(False, "freq_cap")
 
-        last = _parse_dt(snapshot.last_success_at)
-        if last is not None:
-            now = _scene_time(scene.occurred_at)
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
+        last = to_utc(snapshot.runtime.last_success_at)
+        if last is not None and self.settings.cooldown_minutes > 0:
+            now = to_utc(scene.occurred_at) or utc_now()
             if now - last < timedelta(minutes=self.settings.cooldown_minutes):
                 return EligibilityResult(False, "cooldown")
 
@@ -99,18 +72,20 @@ class Policy:
         if snapshot.recent_conversions:
             return OpportunityDecision(OpportunityResult.suppress, "recent_conversion_suppress")
 
-        if scene.scene_id in snapshot.recent_impressions:
+        # Scene dedupe is separate from freq_cap / exposure history
+        if snapshot.runtime.scene_seen_recently:
             return OpportunityDecision(OpportunityResult.suppress, "duplicate_scene_suppress")
 
-        # similar suppress (MVP): only when short-term topic matches recently shown category
-        last = _parse_dt(snapshot.last_success_at)
-        if last is not None and snapshot.recent_shown_categories and snapshot.short_term:
-            now = _scene_time(scene.occurred_at)
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
+        last = to_utc(snapshot.runtime.last_success_at)
+        if (
+            last is not None
+            and snapshot.runtime.recent_shown_categories
+            and snapshot.short_term
+        ):
+            now = to_utc(scene.occurred_at) or utc_now()
             if now - last < timedelta(minutes=self.settings.similar_suppress_minutes):
                 short_topics = {i.topic for i in snapshot.short_term}
-                if short_topics & set(snapshot.recent_shown_categories):
+                if short_topics & set(snapshot.runtime.recent_shown_categories):
                     return OpportunityDecision(
                         OpportunityResult.suppress, "similar_category_suppress"
                     )
@@ -162,13 +137,17 @@ class Policy:
         return DeliveryResult(True, None)
 
     def budget_ok(self, deadline_at: datetime, now: datetime | None = None) -> bool:
-        clock = now or datetime.now(timezone.utc)
-        if deadline_at.tzinfo is None:
-            deadline_at = deadline_at.replace(tzinfo=timezone.utc)
+        clock = now or utc_now()
+        deadline = to_utc(deadline_at) or deadline_at
+        if deadline.tzinfo is None:
+            from datetime import timezone
+
+            deadline = deadline.replace(tzinfo=timezone.utc)
         if clock.tzinfo is None:
+            from datetime import timezone
+
             clock = clock.replace(tzinfo=timezone.utc)
-        # need enough room for one model call (~2s buffer of remaining)
-        return (deadline_at - clock).total_seconds() > 2.0
+        return (deadline - clock).total_seconds() > 2.0
 
 
 def template_reason(c) -> str:

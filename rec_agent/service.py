@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from rec_agent.catalog import Catalog, get_catalog
 from rec_agent.config import Settings, get_settings
@@ -21,6 +21,7 @@ from rec_agent.runtime.loop import AgentLoop
 from rec_agent.runtime.trace import TraceRecorder
 from rec_agent.snapshot import SnapshotBuilder
 from rec_agent.store import Store
+from rec_agent.timeutil import to_utc_iso, utc_now
 from rec_agent.tools import ToolExecutor
 
 
@@ -37,9 +38,9 @@ class RecommendationService:
         self.policy = Policy(self.settings)
         self.engine = RecommendationEngine(self.catalog, self.settings)
         self.guard = Guard(self.settings)
-        self.tools = ToolExecutor(self.catalog, self.engine)
+        self.tools = ToolExecutor(self.catalog, self.engine, store=self.store, settings=self.settings)
         self.loop = AgentLoop(self.tools, self.guard, self.settings)
-        self.snapshots = SnapshotBuilder(self.catalog)
+        self.snapshots = SnapshotBuilder(self.catalog, self.store, self.settings)
         self.feedback_svc = FeedbackService(self.catalog, self.store, self.settings)
 
     def create_task(self, req: CreateTaskRequest) -> RecommendationResult:
@@ -50,12 +51,12 @@ class RecommendationService:
             return RecommendationResult(**{k: v for k, v in existing.items() if k in fields})
 
         task_id = self.store.new_task_id()
-        started = datetime.now(timezone.utc)
+        started = utc_now()
         deadline_at = started + timedelta(milliseconds=self.settings.task_timeout_ms)
         trace = TraceRecorder(run_id=task_id)
+        scene_key = f"{req.scene.trigger.value}:{req.scene.scene_id}"
 
-        self.feedback_svc.prune_expired_not_interested(req.user_id)
-        snapshot = self.snapshots.build(req.user_id, now=started)
+        snapshot = self.snapshots.build(req.user_id, now=started, scene_key=scene_key)
         if not snapshot or snapshot.tenant_id != req.tenant_id:
             result = RecommendationResult(
                 task_id=task_id,
@@ -191,18 +192,20 @@ class RecommendationService:
                 return result
 
         if merchants and status in (TaskStatus.succeeded, TaskStatus.degraded):
-            live = self.catalog.get_user(req.user_id)
-            if live:
-                live.recent_impressions.append(req.scene.scene_id)
-                live.last_success_at = started.isoformat()
-                live.recent_shown_merchants = [m.merchant_id for m in merchants]
-                cats = []
-                by_id = {c.merchant_id: c for c in engine_out.candidates}
-                for m in merchants:
-                    c = by_id.get(m.merchant_id)
-                    if c:
-                        cats.append(c.category)
-                live.recent_shown_categories = cats
+            by_id = {c.merchant_id: c for c in engine_out.candidates}
+            cats = [
+                by_id[m.merchant_id].category
+                for m in merchants
+                if m.merchant_id in by_id
+            ]
+            self.store.record_delivery(
+                req.user_id,
+                task_id=task_id,
+                merchant_ids=[m.merchant_id for m in merchants],
+                categories=cats,
+                delivered_at=to_utc_iso(started),
+            )
+            self.store.record_scene_seen(req.user_id, scene_key, seen_at=to_utc_iso(started))
 
         result = RecommendationResult(
             task_id=task_id,
@@ -220,7 +223,7 @@ class RecommendationService:
                 "intent_conflict": engine_out.intent_conflict,
                 "latency_ms": trace.summary()["latency_ms"],
                 "run_id": trace.run_id,
-                "deadline_at": deadline_at.isoformat(),
+                "deadline_at": to_utc_iso(deadline_at),
             },
         )
         self._persist(task_id, req, key, result, trace)
