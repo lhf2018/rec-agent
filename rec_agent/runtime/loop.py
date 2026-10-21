@@ -40,6 +40,7 @@ class AgentLoop:
         candidates: list[CandidateMerchant],
         trace: TraceRecorder | None = None,
         deadline_at: datetime | None = None,
+        candidate_set_version: str = "",
     ) -> dict[str, Any]:
         self.tools.reset()
         recorder = trace or TraceRecorder()
@@ -47,8 +48,9 @@ class AgentLoop:
         if deadline_at is None:
             deadline_at = utc_now() + timedelta(milliseconds=self.settings.task_timeout_ms)
         budget = DeadlineBudget(deadline_at, self.settings)
+        version = candidate_set_version
         allowed = self._allowed_ids(candidates)
-        evidence = self.guard.build_evidence_index(candidates)
+        evidence = self.guard.build_evidence_index(candidates, candidate_set_version=version)
         by_id = {c.merchant_id: c for c in candidates}
 
         if mode == RouteMode.direct:
@@ -63,7 +65,14 @@ class AgentLoop:
                 actions=[{"tool": "submit_recommendation"}],
                 evidence_ids=[eid for m in draft for eid in m.evidence_ids],
             )
-            gr = self.guard.validate_submission(draft, allowed, by_id, evidence)
+            gr = self.guard.validate_submission(
+                draft,
+                allowed,
+                by_id,
+                evidence,
+                candidate_set_version=version,
+                now=utc_now(),
+            )
             recorder.add_guard({"ok": gr.ok, "errors": gr.errors, "soft_dropped": gr.soft_dropped})
             return self._pack(gr, recorder, candidates, evidence)
 
@@ -94,8 +103,11 @@ class AgentLoop:
                     if obs.get("ok"):
                         evidence[obs["evidence_id"]] = Evidence(
                             evidence_id=obs["evidence_id"],
-                            facts={"compare": True, **obs.get("data", {})},
+                            facts={"compare": True, "data": obs.get("data", {})},
                             source="tool",
+                            subject_type="tool",
+                            subject_id=obs["evidence_id"],
+                            candidate_set_version=version,
                         )
                     recorder.add_step(
                         step_index=step,
@@ -131,10 +143,23 @@ class AgentLoop:
                 if obs.get("ok"):
                     new_raw = obs["data"]["new_candidates"]
                     new_cands = [CandidateMerchant(**c) for c in new_raw]
+                    version = obs["data"].get("candidate_set_version") or version
                     candidates = candidates + new_cands
                     allowed = self._allowed_ids(candidates)
                     by_id = {c.merchant_id: c for c in candidates}
-                    evidence.update(self.guard.build_evidence_index(new_cands))
+                    # drop stale primary evidence that does not match new version
+                    evidence = {
+                        k: v
+                        for k, v in evidence.items()
+                        if v.subject_type in {"snapshot", "tool"}
+                        or not v.candidate_set_version
+                        or v.candidate_set_version == version
+                    }
+                    evidence.update(
+                        self.guard.build_evidence_index(
+                            new_cands, candidate_set_version=version
+                        )
+                    )
                 continue
 
             draft = self._mock_select(snapshot, candidates, prefer_short_term=True)
@@ -145,7 +170,14 @@ class AgentLoop:
                 actions=[{"tool": "submit_recommendation"}],
                 evidence_ids=[eid for m in draft for eid in m.evidence_ids],
             )
-            gr = self.guard.validate_submission(draft, allowed, by_id, evidence)
+            gr = self.guard.validate_submission(
+                draft,
+                allowed,
+                by_id,
+                evidence,
+                candidate_set_version=version,
+                now=utc_now(),
+            )
             recorder.add_guard({"ok": gr.ok, "errors": gr.errors, "soft_dropped": gr.soft_dropped})
             return self._pack(gr, recorder, candidates, evidence)
 

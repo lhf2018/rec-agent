@@ -152,6 +152,7 @@ class RecommendationService:
                 engine_out.candidates,
                 trace=trace,
                 deadline_at=deadline_at,
+                candidate_set_version=engine_out.candidate_set_version,
             )
             model_calls = agent_out.get("model_calls") or 0
             if agent_out.get("ok") and agent_out.get("merchants"):
@@ -167,10 +168,20 @@ class RecommendationService:
             merchants = self._rule_engine_result(engine_out.baseline)
 
         if merchants and source != "agent":
-            evidence = self.guard.build_evidence_index(engine_out.candidates)
+            evidence = self.guard.build_evidence_index(
+                engine_out.candidates,
+                candidate_set_version=engine_out.candidate_set_version,
+            )
             by_id = {c.merchant_id: c for c in engine_out.candidates}
             allowed = set(by_id) | {p.product_id for c in engine_out.candidates for p in c.products}
-            gr = self.guard.validate_submission(merchants, allowed, by_id, evidence)
+            gr = self.guard.validate_submission(
+                merchants,
+                allowed,
+                by_id,
+                evidence,
+                candidate_set_version=engine_out.candidate_set_version,
+                now=utc_now(),
+            )
             merchants = gr.merchants
             trace.add_guard({"ok": gr.ok, "errors": gr.errors, "soft_dropped": gr.soft_dropped})
             if not merchants:
