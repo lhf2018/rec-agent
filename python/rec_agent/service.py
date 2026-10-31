@@ -80,12 +80,30 @@ class RecommendationService:
 
         opp = self.policy.check_opportunity(snapshot, req.scene)
         trace.set_meta(opportunity_result=opp.result.value)
+        self.store.record_opportunity_event(
+            req.user_id,
+            scene_key=scene_key,
+            result=opp.result.value,
+            reason_code=opp.reason_code,
+            task_id=task_id,
+            event_time=to_utc_iso(started),
+            meta={
+                "trigger": req.scene.trigger.value,
+                "channel": req.scene.channel,
+                "score": opp.score,
+                "features": opp.features,
+            },
+        )
         if opp.result == OpportunityResult.suppress:
             result = RecommendationResult(
                 task_id=task_id,
                 status=TaskStatus.suppressed,
                 opportunity_result=opp.result,
                 decision_reason_code=opp.reason_code,
+                metrics={
+                    "opportunity_score": opp.score,
+                    "opportunity_reason": opp.reason_code,
+                },
             )
             self._persist(task_id, req, key, result, trace)
             return result
@@ -95,6 +113,10 @@ class RecommendationService:
                 status=TaskStatus.skipped,
                 opportunity_result=opp.result,
                 decision_reason_code=opp.reason_code,
+                metrics={
+                    "opportunity_score": opp.score,
+                    "opportunity_reason": opp.reason_code,
+                },
             )
             self._persist(task_id, req, key, result, trace)
             return result
@@ -133,6 +155,7 @@ class RecommendationService:
         source = "rule_engine"
         fallback_reason = None
         model_calls = 0
+        self_score: float | None = None
 
         if route.mode == RouteMode.skip:
             status = TaskStatus.empty
@@ -182,9 +205,16 @@ class RecommendationService:
             if agent_out.get("fallback_reason") == "deadline_exhausted":
                 trace.set_meta(budget_exhausted=True)
             model_calls = agent_out.get("model_calls") or 0
+            self_score = agent_out.get("self_score")
             if agent_out.get("ok") and agent_out.get("merchants"):
                 merchants = agent_out["merchants"]
                 source = "agent"
+            elif agent_out.get("ok") and not agent_out.get("merchants"):
+                # explicit skip from agent submit
+                merchants = []
+                status = TaskStatus.empty
+                source = "agent"
+                fallback_reason = agent_out.get("fallback_reason")
             else:
                 merchants = self.guard.baseline_to_recommendations(engine_out.baseline)
                 status = TaskStatus.degraded
@@ -259,6 +289,7 @@ class RecommendationService:
             fallback_reason=fallback_reason,
             source=source,
             merchants=merchants,
+            self_score=self_score,
             metrics={
                 "model_calls": model_calls,
                 "filter_stats": engine_out.filter_stats,
@@ -267,6 +298,9 @@ class RecommendationService:
                 "latency_ms": trace.summary()["latency_ms"],
                 "run_id": trace.run_id,
                 "deadline_at": to_utc_iso(deadline_at),
+                "opportunity_reason": opp.reason_code,
+                "opportunity_score": opp.score,
+                "use_mock_llm": self.settings.use_mock_llm,
             },
         )
         self._persist(task_id, req, key, result, trace)

@@ -92,10 +92,34 @@ API 文档：<http://127.0.0.1:8000/docs>
 
 见 `.env.example`。环境变量前缀 `REC_AGENT_`。
 
+## 真实 LLM（可选）
+
+默认 `REC_AGENT_USE_MOCK_LLM=true`。**密钥不要放进仓库**，放在盘符外置文件：
+
+| 文件 | 内容 |
+| --- | --- |
+| `G:\llm apikey.txt` | 一行 API Key（当前为 DeepSeek Key） |
+| `G:\llm.config.txt` | `base_url=https://api.deepseek.com/v1` · `model=deepseek-chat` |
+
+```bash
+# 外置文件冒烟（不把 key 写入本仓库）
+python eval/smoke_llm.py --real
+
+# 或环境变量
+REC_AGENT_USE_MOCK_LLM=false
+REC_AGENT_LLM_API_KEY_FILE=G:\llm apikey.txt
+REC_AGENT_LLM_CONFIG_FILE=G:\llm.config.txt
+```
+
+未配置 key/base 时 Agent 会降级为 `llm_not_configured`；官方 OpenAI 401 时为 `llm_invalid_api_key` → 引擎基线。
+
+无 Key 也可冒烟协议路径（本地 FakeOpenAI）：`python eval/smoke_llm.py`
+
 ## 里程碑（MVP）
 
 - [x] 引擎硬过滤 + 资格 / 机会 / 路由
 - [x] DIRECT / REACT（mock）+ Guard + Store 动态状态
 - [x] deadline 预算 + 统一评测（含规则重排）
-- [ ] 接入真实 LLM
-- [ ] 线上小流量实验设计
+- [x] 真实 Tool-Calling LLM（保留 mock）+ submit 协议 / 仲裁
+- [x] 曝光 / 商品工具进决策；机会事件埋点；Trace 时间线
+- [ ] 线上小流量实验（有真实行为后再做；清单见 `eval/human_review_checklist.md`）

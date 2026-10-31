@@ -44,5 +44,21 @@
     "scene_id": "eval_opt",
     "expect_status": ["skipped"],
     "force_arms": ["engine"]
+  },
+  {
+    "id": "conflict_direct_soft",
+    "user_id": "u_noodle_regular",
+    "scene_id": "eval_direct_soft",
+    "must_include_category": ["面食"],
+    "must_exclude_merchants": ["m_closed_1", "m_offline_1"],
+    "force_arms": ["engine", "direct"]
+  },
+  {
+    "id": "dietary_react_tools",
+    "user_id": "u_dietary",
+    "scene_id": "eval_dietary_react",
+    "must_exclude_merchants": ["m_spicy_1", "m_blocked_demo", "m_closed_1"],
+    "force_arms": ["engine", "react"],
+    "notes": "REACT 应走曝光+商品工具后再 submit；硬约束不可破"
   }
 ]

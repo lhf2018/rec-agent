@@ -114,7 +114,7 @@ def check_case(case: dict, result: dict, baselines: dict) -> dict:
         quality_gain = False
         for m in result.get("merchants", []):
             for eid in m.get("evidence_ids") or []:
-                if eid.startswith(("cmp_", "supp_", "detail_")):
+                if eid.startswith(("cmp_", "supp_", "detail_", "expo_")):
                     quality_gain = True
                     break
         if case.get("expect_selection_change") and not selection_change:

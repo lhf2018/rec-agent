@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>rec-agent 演示</title>
   <style>
-    :root { --bg:#0f1419; --card:#1a222c; --line:#334155; --text:#e8eef4; --muted:#94a3b8; --accent:#2dd4bf; }
+    :root { --bg:#0f1419; --card:#1a222c; --line:#334155; --text:#e8eef4; --muted:#94a3b8; --accent:#2dd4bf; --warn:#fbbf24; --err:#fb7185; --ok:#34d399; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: "Segoe UI", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }
     main { max-width: 960px; margin: 0 auto; padding: 24px; }
@@ -16,15 +16,35 @@
     label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
     select, button, input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: #111827; color: var(--text); }
     button { background: var(--accent); color: #042f2e; font-weight: 600; border: none; cursor: pointer; margin-top: 14px; }
-    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--muted); max-height: 420px; overflow: auto; }
+    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--muted); max-height: 280px; overflow: auto; }
     .merchant { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
     .meta { font-size: 12px; color: var(--muted); }
+    .timeline { margin-top: 12px; display: flex; flex-direction: column; gap: 0; }
+    .step {
+      position: relative; padding: 10px 12px 10px 28px; border-left: 2px solid var(--line); margin-left: 8px;
+    }
+    .step::before {
+      content: ""; position: absolute; left: -6px; top: 14px; width: 10px; height: 10px;
+      border-radius: 50%; background: var(--muted);
+    }
+    .step.ok::before { background: var(--ok); }
+    .step.err::before { background: var(--err); }
+    .step.warn::before { background: var(--warn); }
+    .step .title { font-size: 13px; font-weight: 600; }
+    .step .detail { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .pill {
+      display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--muted); margin-right: 6px;
+    }
+    .tabs { display: flex; gap: 8px; margin-bottom: 8px; }
+    .tabs button { width: auto; margin: 0; padding: 6px 12px; background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .tabs button.active { background: #134e4a; color: var(--accent); border-color: var(--accent); }
   </style>
 </head>
 <body>
   <main>
     <h1>主动推荐 Agent · 本地演示</h1>
-    <p class="meta">默认 mock 决策，无需 API Key。用户与场景来自 fixtures。</p>
+    <p class="meta">默认 mock 决策（含曝光/商品工具观察）。设置 <code>REC_AGENT_USE_MOCK_LLM=false</code> 可接真实 Tool-Calling。</p>
     <div class="row">
       <div class="card">
         <label>用户</label>
@@ -47,13 +67,56 @@
       </div>
     </div>
     <div class="card" style="margin-top:16px">
-      <div class="meta">Trace</div>
-      <pre id="trace">{}</pre>
+      <div class="tabs">
+        <button type="button" class="active" data-tab="timeline">步骤时间线</button>
+        <button type="button" data-tab="raw">原始 JSON</button>
+      </div>
+      <div id="timeline" class="timeline"></div>
+      <pre id="trace" hidden>{}</pre>
     </div>
   </main>
   <script>
     let lastTask = null;
+    let lastTrace = null;
     const $ = (id) => document.getElementById(id);
+
+    function stepClass(s) {
+      const st = (s.result_status || "").toLowerCase();
+      if (st === "error" || st === "budget_exhausted") return "err";
+      if ((s.guard_results || []).some(g => g && g.ok === false)) return "warn";
+      return "ok";
+    }
+
+    function renderTimeline(payload) {
+      const steps = (payload && payload.steps) || [];
+      const summary = (payload && payload.trace_summary) || {};
+      if (!steps.length) {
+        $("timeline").innerHTML = `<div class="meta">无步骤（可能在资格/机会阶段即结束）· opportunity=${summary.opportunity_result || "-"} · reason=${summary.decision_reason_code || "-"}</div>`;
+        return;
+      }
+      $("timeline").innerHTML = steps.map(s => {
+        const tools = (s.actions || []).map(a => a.tool).filter(Boolean);
+        const eids = (s.evidence_ids || []).slice(0, 4).join(", ");
+        const guard = (s.guard_results || []).slice(-1)[0];
+        const guardTxt = guard
+          ? (guard.ok ? "Guard 通过" : `Guard 拒绝: ${(guard.errors || []).join("; ")}`)
+          : "";
+        return `<div class="step ${stepClass(s)}">
+          <div class="title">
+            <span class="pill">#${s.step_index}</span>
+            ${s.decision_reason_code || "step"}
+            ${s.tool_name ? `<span class="pill">${s.tool_name}</span>` : ""}
+          </div>
+          <div class="detail">
+            status=${s.result_status || "-"}
+            ${tools.length ? ` · tools=${tools.join(",")}` : ""}
+            ${eids ? ` · evidence=${eids}` : ""}
+            ${s.self_score != null ? ` · self_score=${s.self_score}` : ""}
+            ${guardTxt ? ` · ${guardTxt}` : ""}
+          </div>
+        </div>`;
+      }).join("");
+    }
 
     async function run() {
       const body = {
@@ -75,7 +138,8 @@
         body: JSON.stringify(body)
       });
       lastTask = await res.json();
-      $("summary").textContent = `${lastTask.status} · route=${lastTask.route_mode || "-"} · reason=${lastTask.decision_reason_code || "-"} · source=${lastTask.source || "-"}`;
+      const score = lastTask.self_score != null ? ` · score=${lastTask.self_score}` : "";
+      $("summary").textContent = `${lastTask.status} · route=${lastTask.route_mode || "-"} · reason=${lastTask.decision_reason_code || "-"} · source=${lastTask.source || "-"}${score}`;
       $("list").innerHTML = (lastTask.merchants || []).map(m => `
         <div class="merchant">
           <strong>${m.name || m.merchant_id}</strong>
@@ -83,7 +147,9 @@
           <div class="meta">商品: ${(m.products||[]).map(p => p.name || p.product_id).join(", ")}</div>
         </div>`).join("") || "<div class='meta'>无商家</div>";
       const tr = await fetch(`/v1/recommendation-tasks/${lastTask.task_id}/trace`);
-      $("trace").textContent = JSON.stringify(await tr.json(), null, 2);
+      lastTrace = await tr.json();
+      $("trace").textContent = JSON.stringify(lastTrace, null, 2);
+      renderTimeline(lastTrace);
       $("scene").value = "demo_" + Math.floor(Math.random()*10000);
     }
 
@@ -98,6 +164,16 @@
       const data = await res.json();
       alert(data.ok ? "已记录，再点发起推荐看是否过滤" : JSON.stringify(data));
     }
+
+    document.querySelectorAll(".tabs button").forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const tab = btn.dataset.tab;
+        $("timeline").hidden = tab !== "timeline";
+        $("trace").hidden = tab !== "raw";
+      };
+    });
 
     $("run").onclick = run;
     $("ni").onclick = notInterested;

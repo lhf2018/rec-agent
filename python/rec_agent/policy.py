@@ -1,7 +1,8 @@
 ﻿from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 from rec_agent.config import Settings, get_settings
 from rec_agent.models import (
@@ -24,6 +25,8 @@ class EligibilityResult:
 class OpportunityDecision:
     result: OpportunityResult
     reason_code: str
+    score: float = 0.0
+    features: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -68,12 +71,71 @@ class Policy:
 
         return EligibilityResult(True, None)
 
+    def opportunity_features(self, snapshot: UserSnapshot, scene: Scene) -> dict[str, Any]:
+        """Feature vector for future EV model; always logged with opportunity_events."""
+        short_conf = (
+            max((s.confidence for s in snapshot.short_term), default=0.0)
+            if snapshot.short_term
+            else 0.0
+        )
+        last = to_utc(snapshot.runtime.last_success_at)
+        now = to_utc(scene.occurred_at) or utc_now()
+        minutes_since_delivery = (
+            (now - last).total_seconds() / 60.0 if last is not None else None
+        )
+        return {
+            "has_recent_conversion": bool(snapshot.recent_conversions),
+            "scene_seen_recently": bool(snapshot.runtime.scene_seen_recently),
+            "delivery_count_in_window": int(snapshot.runtime.delivery_count_in_window),
+            "not_interested_count": len(snapshot.hard.not_interested_merchants),
+            "has_short_term": bool(snapshot.short_term),
+            "short_term_confidence": round(float(short_conf), 4),
+            "frequent_merchant_count": len(snapshot.frequent_merchants),
+            "recent_shown_category_count": len(snapshot.runtime.recent_shown_categories),
+            "exposure_count": len(snapshot.runtime.exposure_merchant_ids),
+            "minutes_since_delivery": (
+                round(minutes_since_delivery, 2) if minutes_since_delivery is not None else None
+            ),
+            "meal_period": scene.meal_period,
+            "trigger": scene.trigger.value,
+        }
+
+    def score_opportunity(self, features: dict[str, Any]) -> float:
+        """Heuristic opportunity score in [0, 1]. Hard rules still own final suppress/skip."""
+        score = 0.62
+        if features.get("has_short_term"):
+            score += 0.12 * min(1.0, float(features.get("short_term_confidence") or 0.0))
+        if int(features.get("frequent_merchant_count") or 0) > 0:
+            score += 0.08
+        if features.get("has_recent_conversion"):
+            score -= 0.35
+        if features.get("scene_seen_recently"):
+            score -= 0.28
+        ni = int(features.get("not_interested_count") or 0)
+        if ni >= 5:
+            score -= 0.2
+        elif ni >= 2:
+            score -= 0.08
+        deliveries = int(features.get("delivery_count_in_window") or 0)
+        if deliveries >= max(1, self.settings.freq_cap_per_day // 2):
+            score -= 0.1
+        mins = features.get("minutes_since_delivery")
+        if mins is not None and mins < 30:
+            score -= 0.12
+        return round(max(0.0, min(1.0, score)), 4)
+
     def check_opportunity(self, snapshot: UserSnapshot, scene: Scene) -> OpportunityDecision:
+        features = self.opportunity_features(snapshot, scene)
+        score = self.score_opportunity(features)
+
+        def decide(result: OpportunityResult, reason: str) -> OpportunityDecision:
+            return OpportunityDecision(result, reason, score=score, features=features)
+
         if snapshot.recent_conversions:
-            return OpportunityDecision(OpportunityResult.suppress, "recent_conversion_suppress")
+            return decide(OpportunityResult.suppress, "recent_conversion_suppress")
 
         if snapshot.runtime.scene_seen_recently:
-            return OpportunityDecision(OpportunityResult.suppress, "duplicate_scene_suppress")
+            return decide(OpportunityResult.suppress, "duplicate_scene_suppress")
 
         last = to_utc(snapshot.runtime.last_success_at)
         if (
@@ -85,18 +147,21 @@ class Policy:
             if now - last < timedelta(minutes=self.settings.similar_suppress_minutes):
                 short_topics = {i.topic for i in snapshot.short_term}
                 if short_topics & set(snapshot.runtime.recent_shown_categories):
-                    return OpportunityDecision(
-                        OpportunityResult.suppress, "similar_category_suppress"
-                    )
+                    return decide(OpportunityResult.suppress, "similar_category_suppress")
 
         if (
             len(snapshot.hard.not_interested_merchants) >= 5
             and not snapshot.short_term
             and not snapshot.frequent_merchants
         ):
-            return OpportunityDecision(OpportunityResult.suppress, "sparse_after_negative")
+            return decide(OpportunityResult.suppress, "sparse_after_negative")
 
-        return OpportunityDecision(OpportunityResult.recommend_now, "opportunity_ok")
+        # Soft gate: optional score floor (off by default)
+        thr = self.settings.opportunity_min_score
+        if thr is not None and score < thr:
+            return decide(OpportunityResult.suppress, "low_opportunity_score")
+
+        return decide(OpportunityResult.recommend_now, "opportunity_ok")
 
     def route(
         self,

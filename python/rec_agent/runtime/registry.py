@@ -101,6 +101,25 @@ class ToolRegistry:
     def is_allowed(self, name: str) -> bool:
         return name in TOOL_WHITELIST
 
+    def as_openai_tools(self, names: list[str] | None = None) -> list[dict[str, Any]]:
+        selected = names if names is not None else sorted(TOOL_WHITELIST)
+        out: list[dict[str, Any]] = []
+        for name in selected:
+            if name not in TOOL_SCHEMAS:
+                continue
+            meta = TOOL_SCHEMAS[name]
+            out.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": meta.get("description") or name,
+                        "parameters": meta.get("parameters") or {"type": "object", "properties": {}},
+                    },
+                }
+            )
+        return out
+
     def validate_args(self, name: str, args: dict[str, Any]) -> str | None:
         if name not in TOOL_WHITELIST:
             return "unknown_tool"

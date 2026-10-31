@@ -1,4 +1,10 @@
 .env
+.env.local
+**/secrets/
+*.pem
+# never commit local API key copies (keys live outside repo, e.g. G:\llm apikey.txt)
+*apikey*
+*api_key*
 .venv/
 venv/
 python/.venv/

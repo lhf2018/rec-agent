@@ -95,10 +95,22 @@ class Store:
                   event_time TEXT NOT NULL,
                   task_id TEXT
                 );
+                CREATE TABLE IF NOT EXISTS opportunity_events (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id TEXT NOT NULL,
+                  task_id TEXT,
+                  scene_key TEXT NOT NULL,
+                  result TEXT NOT NULL,
+                  reason_code TEXT NOT NULL,
+                  event_time TEXT NOT NULL,
+                  meta_json TEXT
+                );
                 CREATE INDEX IF NOT EXISTS idx_deliveries_user_time
                   ON deliveries(user_id, delivered_at);
                 CREATE INDEX IF NOT EXISTS idx_exposures_user_time
                   ON exposures(user_id, event_time);
+                CREATE INDEX IF NOT EXISTS idx_opportunity_user_time
+                  ON opportunity_events(user_id, event_time);
                 """
             )
 
@@ -337,3 +349,74 @@ class Store:
                 )
                 for r in rows
             ]
+
+    def record_opportunity_event(
+        self,
+        user_id: str,
+        *,
+        scene_key: str,
+        result: str,
+        reason_code: str,
+        task_id: str | None = None,
+        event_time: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        at = to_utc_iso(event_time)
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO opportunity_events(
+                  user_id, task_id, scene_key, result, reason_code, event_time, meta_json
+                ) VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    user_id,
+                    task_id,
+                    scene_key,
+                    result,
+                    reason_code,
+                    at,
+                    json.dumps(meta or {}, ensure_ascii=False),
+                ),
+            )
+
+    def list_opportunity_events(
+        self,
+        user_id: str | None = None,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self._conn() as conn:
+            if user_id:
+                rows = conn.execute(
+                    """
+                    SELECT user_id, task_id, scene_key, result, reason_code, event_time, meta_json
+                    FROM opportunity_events
+                    WHERE user_id = ?
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (user_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT user_id, task_id, scene_key, result, reason_code, event_time, meta_json
+                    FROM opportunity_events
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                out.append(
+                    {
+                        "user_id": r["user_id"],
+                        "task_id": r["task_id"],
+                        "scene_key": r["scene_key"],
+                        "result": r["result"],
+                        "reason_code": r["reason_code"],
+                        "event_time": r["event_time"],
+                        "meta": json.loads(r["meta_json"] or "{}"),
+                    }
+                )
+            return out
